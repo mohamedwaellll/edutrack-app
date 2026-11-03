@@ -36,3 +36,5 @@ venv/
 *.sw?
 .DS_Store
 Thumbs.db
+# Next.js
+.next/
