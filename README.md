@@ -67,3 +67,11 @@ npm run build
 - جداول `groups`, `teachers`, `students`, `attendance`, `grades`, `teacher_notes`, `activity_logs`.
 - قواعد الأمان والحماية (Row Level Security - RLS).
 - بيانات أولية تجريبية (Seed Data) مطابقة تماماً لشاشات التصميم (Lara Hassan, Adam Nabil, Youssef Ali, Mariam Samir, Dr. Salma Farid).
+
+---
+
+## 📱 مخرجات أعضاء الفريق المدمجة (Integrated Team Components)
+
+- **لوحة تحكم ولي الأمر (`ParentDashboard.tsx` - يوسف القاضي):** متوفرة ومربوطة بنظام ألوان الـ Parent Portal ولوحة المعلم.
+- **كروت الطلاب ونظام الـ QR (`Qr code/` - عبد الرحمن خضري):** كروت تعريف الطلاب المزودة بـ QR Code.
+- **لوحات الشرف والتصميم (`UI-UX/` - مينا أيمن):** ملفات وتصميمات الشاشات الست المعتمدة.
