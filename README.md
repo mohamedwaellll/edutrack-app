@@ -32,41 +32,87 @@
 
 ---
 
-## 🚀 تشغيل المشروع محلياً (Local Development Setup)
+## 🗄️ إعداد قاعدة البيانات (Supabase Database Setup & Migrations)
 
-1. **تثبيت الحزم (Dependencies):**
-```bash
-npm install
-```
+### 1. إعداد قاعدة بيانات جديدة (Fresh Database Setup)
+نفّذ الملف التالي في **Supabase SQL Editor**:
+- `supabase/migrations/20261103_edutrack_schema.sql`
+  - ينشئ الجداول: `profiles`, `groups`, `teachers`, `students`, `attendance`, `grades`, `teacher_notes`, `activity_logs`.
+  - يفعّل سياسات حماية صارمة (Row Level Security - RLS) تمنع الوصول غير المصرح به بدون دور `admin`.
+  - يمنع رفع الصلاحيات الذاتي للمستخدمين عبر Trigger `trg_prevent_self_role_escalation`.
+  - يحدّث تلقائياً عداد الطلاب في المجموعة `enrolled_count`.
 
-2. **إعداد متغيرات البيئة (Environment Variables):**
-انسخ ملف `.env.example` إلى `.env`:
-```bash
-cp .env.example .env
-```
-أدخل مفاتيح مشروع Supabase (المستلمة من علي عبد القادر).
+### 2. ترقية قاعدة بيانات موجودة مسبقاً (Non-Destructive Upgrade)
+إذا كانت قاعدة البيانات تحتوي بالفعل على بيانات ومخطط سابق، نفّذ ملف الترقية دون فقدان أو مسح أي بيانات:
+- `supabase/migrations/20261117_edutrack_admin_auth_upgrade.sql`
+  - يسقط السياسات المتساهلة القديمة (`USING (true)`).
+  - ينشئ دالة `public.is_admin()` الآمنة بـ `SECURITY DEFINER` لمنع الـ Recursion.
+  - يطبق سياسات RLS الصارمة ويحمي جدول `profiles`.
 
-3. **تشغيل خادم التطوير:**
-```bash
-npm run dev
-```
+### 3. البيانات التجريبية الاختيارية (Optional Demo Seed Data)
+لإدخال بيانات تجريبية متوافقة تماماً مع معايير RFC 4122 UUID وبدون تكرار:
+- `supabase/migrations/20261103_edutrack_seed.sql`
+  - يستخدم بنية `ON CONFLICT DO NOTHING` لضمان إمكانية تكرار التنفيذ بأمان.
+  - يملأ بيانات تجريبية للمجموعات والطلاب والمعلمين.
 
-4. **بناء المشروع للإنتاج (Production Build):**
-```bash
-npm run build
+---
+
+## 🔐 إنشاء وتعيين حساب الأدمن الأولي (Secure Admin Provisioning)
+
+لضمان الأمان الكامل، لا يحتوي كود المتصفح على أي `service_role` key ولا يسمح بالتسجيل العام بصلاحية أدمن.
+
+1. ادخل إلى **Supabase Dashboard** -> **Authentication** -> **Users** -> **Add User**.
+2. اختر **Create User** وأدخل البريد وكلمة المرور (مثال: `admin@edutrack.com`).
+3. انسخ الـ **User UID** الذي تم إنشاؤه.
+4. افتح **SQL Editor** في Supabase ونفذ الاستعلام التالي لربط المستخدم بدور الأدمن:
+
+```sql
+INSERT INTO public.profiles (id, email, full_name, role)
+VALUES ('<USER_UID_HERE>', 'admin@edutrack.com', 'System Administrator', 'admin')
+ON CONFLICT (id) DO UPDATE SET role = 'admin';
 ```
 
 ---
 
-## 🗄️ قاعدة البيانات (Supabase Database Migrations)
+## 🚀 تشغيل واختبار المشروع محلياً (Local Setup & Verification)
 
-ملف الـ SQL الجاهز للتنفيذ موجود في:
-`supabase/migrations/20261103_edutrack_schema.sql`
+### 1. تثبيت الحزم (Dependencies):
+```bash
+npm install
+```
 
-يحتوي على:
-- جداول `groups`, `teachers`, `students`, `attendance`, `grades`, `teacher_notes`, `activity_logs`.
-- قواعد الأمان والحماية (Row Level Security - RLS).
-- بيانات أولية تجريبية (Seed Data) مطابقة تماماً لشاشات التصميم (Lara Hassan, Adam Nabil, Youssef Ali, Mariam Samir, Dr. Salma Farid).
+### 2. إعداد متغيرات البيئة (Environment Variables):
+انسخ ملف `.env.example` إلى `.env`:
+```bash
+cp .env.example .env
+```
+املأ المفاتيح الخاصة بمشروعك في Supabase:
+```env
+VITE_SUPABASE_URL=https://your-project.supabase.co
+VITE_SUPABASE_ANON_KEY=your-anon-key-here
+```
+*(ملاحظة: إذا كانت المفاتيح غير معينة أو تحتوي على القيم الافتراضية، سيعرض التطبيق شاشة تنبيه واضحة `UnconfiguredNotice` توضح خطوات الربط).*
+
+### 3. تشغيل الاختبارات الآلية (Automated Tests):
+تم إعداد حزم اختبار شاملة باستخدام **Vitest**:
+```bash
+npm test
+```
+تشمل الاختبارات التحقق من:
+- `adminService.test.ts`: جلب الطلاب والمجموعات، منع البيانات الوهمية (Mock data) في الوضع الحي، معالجة كود الطالب المكرر، حفظ `group_id` بشكل صحيح.
+- `authAndRoles.test.ts`: التحقق من منطق الصلاحيات وحماية الأدمن ورفض الأدوار الأخرى.
+- `databaseMigrations.test.ts`: فحص ملفات الـ SQL والتأكد من صحة الـ UUIDs وغياب الـ `USING (true)` المتساهل.
+- `adminFlow.test.ts`: محاكاة تدفق الأدمن الكامل من تسجيل الدخول إلى إضافة الطالب والتأكيد.
+
+### 4. بناء المشروع للإنتاج (Production Build):
+```bash
+npm run build
+```
+
+### 5. تشغيل خادم التطوير (Dev Server):
+```bash
+npm run dev
+```
 
 ---
 

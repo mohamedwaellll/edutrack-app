@@ -59,13 +59,15 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
         teacherService.getFeedback(),
         adminService.getStudents(),
       ]);
-      setClasses(cls);
+      const classesData = cls.data || [];
+      const studentsData = stds.data || [];
+      setClasses(classesData);
       setGrades(grds);
       setFeedbacks(fbs);
-      setStudents(stds);
-      if (stds.length > 0) {
-        setTargetStudentId(stds[0].id);
-        setFeedbackStudentId(stds[0].id);
+      setStudents(studentsData);
+      if (studentsData.length > 0) {
+        setTargetStudentId(studentsData[0].id);
+        setFeedbackStudentId(studentsData[0].id);
       }
     } catch (e) {
       console.error(e);

@@ -1,11 +1,12 @@
 -- =========================================================================
 -- EduTrack Database Schema (PostgreSQL / Supabase)
--- Author: Mohamed Wael (GitHub & Admin / Lead Database Architect)
--- Module: Admin Dashboard, Groups, Attendance, Grades & Teacher Feedback
+-- Module: Required Schema Setup & Database-Enforced Authorization (RLS)
+-- Note: Seed data is strictly separated into 20261103_edutrack_seed.sql
 -- =========================================================================
 
 -- Enable UUID extension if not already enabled
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
 -- 1. ENUMS
 DO $$ BEGIN
@@ -26,7 +27,7 @@ EXCEPTION
     WHEN duplicate_object THEN null;
 END $$;
 
--- 2. USERS / PROFILES (Shared with Ali Abdelkader's Auth module)
+-- 2. USERS / PROFILES (Links to auth.users)
 CREATE TABLE IF NOT EXISTS public.profiles (
     id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
     email TEXT UNIQUE NOT NULL,
@@ -74,14 +75,14 @@ CREATE TABLE IF NOT EXISTS public.students (
     student_code TEXT UNIQUE NOT NULL, -- e.g. "ET-2048"
     group_id UUID REFERENCES public.groups(id) ON DELETE SET NULL,
     grade_level TEXT NOT NULL,
-    qr_code_hash TEXT UNIQUE NOT NULL, -- Scanned by Abdelrahman Khodary's scanner
+    qr_code_hash TEXT UNIQUE NOT NULL,
     parent_name TEXT,
     parent_phone TEXT,
     status TEXT DEFAULT 'active' CHECK (status IN ('active', 'suspended', 'graduated')),
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 6. ATTENDANCE TABLE (Realtime enabled for Youssef & Abdelrahman)
+-- 6. ATTENDANCE TABLE
 CREATE TABLE IF NOT EXISTS public.attendance (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     student_id UUID NOT NULL REFERENCES public.students(id) ON DELETE CASCADE,
@@ -95,13 +96,13 @@ CREATE TABLE IF NOT EXISTS public.attendance (
     CONSTRAINT unique_daily_attendance UNIQUE(student_id, date)
 );
 
--- 7. GRADES TABLE (Managed via TeacherDashboard)
+-- 7. GRADES TABLE
 CREATE TABLE IF NOT EXISTS public.grades (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     student_id UUID NOT NULL REFERENCES public.students(id) ON DELETE CASCADE,
     group_id UUID NOT NULL REFERENCES public.groups(id) ON DELETE CASCADE,
     teacher_id UUID REFERENCES public.teachers(id) ON DELETE SET NULL,
-    assessment_title TEXT NOT NULL, -- e.g. "Chapter 06 Exam"
+    assessment_title TEXT NOT NULL,
     grade_type grade_category NOT NULL DEFAULT 'exam',
     score NUMERIC(5,2) NOT NULL,
     max_score NUMERIC(5,2) NOT NULL DEFAULT 100,
@@ -110,7 +111,7 @@ CREATE TABLE IF NOT EXISTS public.grades (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 8. TEACHER NOTES & FEEDBACK TABLE (Feeds ParentDashboard & Student progress)
+-- 8. TEACHER NOTES TABLE
 CREATE TABLE IF NOT EXISTS public.teacher_notes (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     teacher_id UUID NOT NULL REFERENCES public.teachers(id) ON DELETE CASCADE,
@@ -120,7 +121,7 @@ CREATE TABLE IF NOT EXISTS public.teacher_notes (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 9. RECENT ACTIVITY LOGS
+-- 9. ACTIVITY LOGS TABLE
 CREATE TABLE IF NOT EXISTS public.activity_logs (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     title TEXT NOT NULL,
@@ -128,6 +129,89 @@ CREATE TABLE IF NOT EXISTS public.activity_logs (
     type TEXT NOT NULL, -- 'student' | 'schedule' | 'report' | 'teacher'
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- =========================================================================
+-- DATABASE FUNCTIONS & TRIGGERS (Security & Automation)
+-- =========================================================================
+
+-- Helper to check if current authenticated user has the 'admin' role
+-- SECURITY DEFINER runs with creator privileges and avoids recursive RLS evaluation
+CREATE OR REPLACE FUNCTION public.is_admin()
+RETURNS BOOLEAN
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM public.profiles
+    WHERE id = auth.uid() AND role = 'admin'
+  );
+$$;
+
+-- Trigger to prevent self-elevation to admin by non-admin users
+CREATE OR REPLACE FUNCTION public.check_profile_role_update()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  IF NEW.role IS DISTINCT FROM OLD.role THEN
+    IF NOT public.is_admin() THEN
+      RAISE EXCEPTION 'Unauthorized: Only administrators can modify user roles';
+    END IF;
+  END IF;
+  NEW.updated_at = NOW();
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS tr_check_profile_role ON public.profiles;
+CREATE TRIGGER tr_check_profile_role
+BEFORE UPDATE ON public.profiles
+FOR EACH ROW
+EXECUTE FUNCTION public.check_profile_role_update();
+
+-- Auto-update group enrolled_count when students are added or changed
+CREATE OR REPLACE FUNCTION public.sync_group_enrolled_count()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  IF TG_OP = 'INSERT' AND NEW.group_id IS NOT NULL THEN
+    UPDATE public.groups
+    SET enrolled_count = (SELECT COUNT(*) FROM public.students WHERE group_id = NEW.group_id)
+    WHERE id = NEW.group_id;
+  ELSIF TG_OP = 'UPDATE' THEN
+    IF OLD.group_id IS DISTINCT FROM NEW.group_id THEN
+      IF OLD.group_id IS NOT NULL THEN
+        UPDATE public.groups
+        SET enrolled_count = (SELECT COUNT(*) FROM public.students WHERE group_id = OLD.group_id)
+        WHERE id = OLD.group_id;
+      END IF;
+      IF NEW.group_id IS NOT NULL THEN
+        UPDATE public.groups
+        SET enrolled_count = (SELECT COUNT(*) FROM public.students WHERE group_id = NEW.group_id)
+        WHERE id = NEW.group_id;
+      END IF;
+    END IF;
+  ELSIF TG_OP = 'DELETE' AND OLD.group_id IS NOT NULL THEN
+    UPDATE public.groups
+    SET enrolled_count = (SELECT COUNT(*) FROM public.students WHERE group_id = OLD.group_id)
+    WHERE id = OLD.group_id;
+  END IF;
+  RETURN NULL;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS tr_sync_group_enrolled_count ON public.students;
+CREATE TRIGGER tr_sync_group_enrolled_count
+AFTER INSERT OR UPDATE OR DELETE ON public.students
+FOR EACH ROW
+EXECUTE FUNCTION public.sync_group_enrolled_count();
 
 -- =========================================================================
 -- ROW LEVEL SECURITY (RLS) POLICIES
@@ -141,75 +225,78 @@ ALTER TABLE public.grades ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.teacher_notes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.activity_logs ENABLE ROW LEVEL SECURITY;
 
--- Admins full access
-CREATE POLICY "Admins have full access" ON public.groups FOR ALL USING (true);
-CREATE POLICY "Admins have full access" ON public.teachers FOR ALL USING (true);
-CREATE POLICY "Admins have full access" ON public.students FOR ALL USING (true);
-CREATE POLICY "Admins have full access" ON public.attendance FOR ALL USING (true);
-CREATE POLICY "Admins have full access" ON public.grades FOR ALL USING (true);
-CREATE POLICY "Admins have full access" ON public.teacher_notes FOR ALL USING (true);
-CREATE POLICY "Admins have full access" ON public.activity_logs FOR ALL USING (true);
+-- 1. PROFILES POLICIES
+DROP POLICY IF EXISTS "Users can view own profile or admin views all" ON public.profiles;
+CREATE POLICY "Users can view own profile or admin views all"
+ON public.profiles FOR SELECT
+TO authenticated
+USING (id = auth.uid() OR public.is_admin());
 
--- =========================================================================
--- SEED DATA (Matches EduTrack UI Mockups Exactly)
--- =========================================================================
+DROP POLICY IF EXISTS "Users can update own profile" ON public.profiles;
+CREATE POLICY "Users can update own profile"
+ON public.profiles FOR UPDATE
+TO authenticated
+USING (id = auth.uid() OR public.is_admin())
+WITH CHECK (id = auth.uid() OR public.is_admin());
 
--- Teachers
-INSERT INTO public.teachers (id, full_name, subject, email, phone, room_number)
-VALUES 
-  ('11111111-1111-1111-1111-111111111111', 'Dr. Salma Farid', 'Science', 'salma.farid@edutrack.com', '+20 100 111 2233', 'Room 204'),
-  ('22222222-2222-2222-2222-222222222222', 'Omar Adel', 'Mathematics', 'omar.adel@edutrack.com', '+20 101 222 3344', 'Room 105'),
-  ('33333333-3333-3333-3333-333333333333', 'Mina Ayman', 'UI/UX & Computing', 'mina.ayman@edutrack.com', '+20 102 333 4455', 'Lab 3')
-ON CONFLICT (email) DO NOTHING;
+DROP POLICY IF EXISTS "Users can insert own profile" ON public.profiles;
+CREATE POLICY "Users can insert own profile"
+ON public.profiles FOR INSERT
+TO authenticated
+WITH CHECK (id = auth.uid() AND (role <> 'admin' OR public.is_admin()));
 
--- Groups / Classes
-INSERT INTO public.groups (id, name, grade_level, teacher_id, subject, room, capacity, enrolled_count)
-VALUES
-  ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'Grade 8A', 'Grade 8', '11111111-1111-1111-1111-111111111111', 'Science', 'Room 204', 30, 28),
-  ('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 'Grade 7B', 'Grade 7', '22222222-2222-2222-2222-222222222222', 'Mathematics', 'Room 105', 30, 27),
-  ('cccccccc-cccc-cccc-cccc-cccccccccccc', 'Grade 9C', 'Grade 9', '11111111-1111-1111-1111-111111111111', 'Science', 'Room 206', 25, 24)
-ON CONFLICT DO NOTHING;
+-- 2. GROUPS POLICIES (Admins only for this milestone)
+DROP POLICY IF EXISTS "Admins have full access to groups" ON public.groups;
+CREATE POLICY "Admins have full access to groups"
+ON public.groups FOR ALL
+TO authenticated
+USING (public.is_admin())
+WITH CHECK (public.is_admin());
 
--- Students
-INSERT INTO public.students (id, full_name, student_code, group_id, grade_level, qr_code_hash, parent_name, parent_phone, status)
-VALUES
-  ('s1111111-1111-1111-1111-111111111111', 'Lara Hassan', 'ET-2048', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'Grade 8A', 'QR_LARA_2048', 'Hassan Mahmoud', '+20 120 123 4567', 'active'),
-  ('s2222222-2222-2222-2222-222222222222', 'Adam Nabil', 'ET-2049', 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 'Grade 7B', 'QR_ADAM_2049', 'Nabil Farouk', '+20 121 234 5678', 'active'),
-  ('s3333333-3333-3333-3333-333333333333', 'Youssef Ali', 'ET-2050', 'cccccccc-cccc-cccc-cccc-cccccccccccc', 'Grade 9C', 'QR_YOUSSEF_2050', 'Ali Salem', '+20 122 345 6789', 'active'),
-  ('s4444444-4444-4444-4444-444444444444', 'Mariam Samir', 'ET-2051', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'Grade 8A', 'QR_MARIAM_2051', 'Samir Ezzat', '+20 123 456 7890', 'active')
-ON CONFLICT (student_code) DO NOTHING;
+-- 3. STUDENTS POLICIES (Admins only for this milestone)
+DROP POLICY IF EXISTS "Admins have full access to students" ON public.students;
+CREATE POLICY "Admins have full access to students"
+ON public.students FOR ALL
+TO authenticated
+USING (public.is_admin())
+WITH CHECK (public.is_admin());
 
--- Attendance (Today)
-INSERT INTO public.attendance (student_id, group_id, status, check_in_time, date, scan_method)
-VALUES
-  ('s1111111-1111-1111-1111-111111111111', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'Present', '08:02:00', CURRENT_DATE, 'qr'),
-  ('s2222222-2222-2222-2222-222222222222', 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 'Present', '08:05:00', CURRENT_DATE, 'qr'),
-  ('s3333333-3333-3333-3333-333333333333', 'cccccccc-cccc-cccc-cccc-cccccccccccc', 'Late',    '08:27:00', CURRENT_DATE, 'qr'),
-  ('s4444444-4444-4444-4444-444444444444', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'Present', '08:00:00', CURRENT_DATE, 'qr')
-ON CONFLICT (student_id, date) DO UPDATE 
-SET status = EXCLUDED.status, check_in_time = EXCLUDED.check_in_time;
+-- 4. TEACHERS POLICIES (Admins only for this milestone)
+DROP POLICY IF EXISTS "Admins have full access to teachers" ON public.teachers;
+CREATE POLICY "Admins have full access to teachers"
+ON public.teachers FOR ALL
+TO authenticated
+USING (public.is_admin())
+WITH CHECK (public.is_admin());
 
--- Grades
-INSERT INTO public.grades (student_id, group_id, teacher_id, assessment_title, grade_type, score, max_score, remarks)
-VALUES
-  ('s1111111-1111-1111-1111-111111111111', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '11111111-1111-1111-1111-111111111111', 'Midterm Science Exam', 'exam', 96.0, 100.0, 'Exceptional mastery of solar system physics'),
-  ('s1111111-1111-1111-1111-111111111111', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '11111111-1111-1111-1111-111111111111', 'Lab Experiment #3', 'assignment', 94.0, 100.0, 'Excellent lab notes and accuracy'),
-  ('s2222222-2222-2222-2222-222222222222', 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', '22222222-2222-2222-2222-222222222222', 'Algebra Quiz 2', 'quiz', 88.5, 100.0, 'Good logic, minor arithmetic slip'),
-  ('s3333333-3333-3333-3333-333333333333', 'cccccccc-cccc-cccc-cccc-cccccccccccc', '11111111-1111-1111-1111-111111111111', 'Chemistry Lab Report', 'assignment', 82.0, 100.0, 'Needs closer attention to safety guidelines'),
-  ('s4444444-4444-4444-4444-444444444444', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '11111111-1111-1111-1111-111111111111', 'Midterm Science Exam', 'exam', 92.0, 100.0, 'Strong problem solving skills')
-ON CONFLICT DO NOTHING;
+-- 5. ATTENDANCE POLICIES (Admins only for this milestone)
+DROP POLICY IF EXISTS "Admins have full access to attendance" ON public.attendance;
+CREATE POLICY "Admins have full access to attendance"
+ON public.attendance FOR ALL
+TO authenticated
+USING (public.is_admin())
+WITH CHECK (public.is_admin());
 
--- Teacher Notes (Feedback)
-INSERT INTO public.teacher_notes (teacher_id, student_id, feedback_text, is_parent_visible)
-VALUES
-  ('11111111-1111-1111-1111-111111111111', 's1111111-1111-1111-1111-111111111111', 'Lara is showing wonderful curiosity and steady progress in science. Her class participation has improved significantly.', true)
-ON CONFLICT DO NOTHING;
+-- 6. GRADES POLICIES (Admins only for this milestone)
+DROP POLICY IF EXISTS "Admins have full access to grades" ON public.grades;
+CREATE POLICY "Admins have full access to grades"
+ON public.grades FOR ALL
+TO authenticated
+USING (public.is_admin())
+WITH CHECK (public.is_admin());
 
--- Activity Logs
-INSERT INTO public.activity_logs (title, description, type, created_at)
-VALUES
-  ('New student enrolled', 'Lara Hassan • Grade 8', 'student', NOW() - INTERVAL '10 minutes'),
-  ('Class schedule updated', 'Science • Room 204', 'schedule', NOW() - INTERVAL '42 minutes'),
-  ('Report published', 'Term 1 progress report', 'report', NOW() - INTERVAL '2 hours'),
-  ('Teacher added', 'Omar Adel • Mathematics', 'teacher', NOW() - INTERVAL '1 day')
-ON CONFLICT DO NOTHING;
+-- 7. TEACHER NOTES POLICIES (Admins only for this milestone)
+DROP POLICY IF EXISTS "Admins have full access to teacher_notes" ON public.teacher_notes;
+CREATE POLICY "Admins have full access to teacher_notes"
+ON public.teacher_notes FOR ALL
+TO authenticated
+USING (public.is_admin())
+WITH CHECK (public.is_admin());
+
+-- 8. ACTIVITY LOGS POLICIES (Admins only for this milestone)
+DROP POLICY IF EXISTS "Admins have full access to activity_logs" ON public.activity_logs;
+CREATE POLICY "Admins have full access to activity_logs"
+ON public.activity_logs FOR ALL
+TO authenticated
+USING (public.is_admin())
+WITH CHECK (public.is_admin());

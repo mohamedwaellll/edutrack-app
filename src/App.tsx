@@ -1,80 +1,141 @@
 import React, { useState } from 'react';
+import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { AdminDashboard } from './components/AdminDashboard';
-import { TeacherDashboard } from './components/TeacherDashboard';
+import { AuthPage } from './components/AuthPage';
+import { AccessDenied } from './components/AccessDenied';
+import { UnconfiguredNotice } from './components/UnconfiguredNotice';
+import TeacherDashboard from './components/TeacherDashboard';
 import ParentDashboard from './components/ParentDashboard';
 import StudentCardsPrintPage from './components/StudentCardsPrintPage';
-import { Shield, BookOpen, UserCheck, QrCode } from 'lucide-react';
+import { Loader2, Sparkles, Eye, ArrowLeft } from 'lucide-react';
 
-export function App() {
-  const [currentView, setCurrentView] = useState<'admin' | 'teacher' | 'parent' | 'qr'>('admin');
+function AppContent() {
+  const { status, profile, user } = useAuth();
+  // Isolated preview state for teammate components (strictly decoupled from real auth flow)
+  const [isolatedPreview, setIsolatedPreview] = useState<'teacher' | 'parent' | 'qr' | null>(null);
 
+  // 1. Unconfigured Supabase environment
+  if (status === 'unconfigured') {
+    return <UnconfiguredNotice />;
+  }
+
+  // 2. Global loading state while restoring session or fetching profile
+  if (status === 'loading') {
+    return (
+      <div className="min-h-screen bg-[#0B1024] text-white flex flex-col items-center justify-center p-6 font-sans">
+        <div className="flex items-center gap-2.5 text-[#70C9DC] mb-4">
+          <Sparkles className="w-6 h-6 fill-current text-[#70C9DC]" />
+          <span className="text-2xl font-black tracking-tight text-white">EduTrack</span>
+        </div>
+        <div className="flex items-center gap-2 text-xs text-[#C7B8ED]">
+          <Loader2 className="w-4 h-4 animate-spin text-[#547FE8]" />
+          <span>Restoring authenticated session...</span>
+        </div>
+      </div>
+    );
+  }
+
+  // 3. Unauthenticated: Show login page
+  if (status === 'unauthenticated') {
+    return <AuthPage />;
+  }
+
+  // 4. Missing profile in public.profiles: show clear access state (never admin fallback)
+  if (status === 'missing_profile') {
+    return <AccessDenied />;
+  }
+
+  // 5. Non-admin account: show clear access state (never admin fallback)
+  if (status === 'authenticated_non_admin') {
+    return <AccessDenied />;
+  }
+
+  // 6. Isolated teammate component preview (if explicitly invoked by admin)
+  if (isolatedPreview === 'teacher') {
+    return (
+      <div className="relative">
+        <div className="bg-amber-500 text-black px-4 py-1.5 text-xs font-bold flex items-center justify-between sticky top-0 z-50 shadow-sm">
+          <span>[ISOLATED PREVIEW] Viewing Teammate Component: TeacherDashboard</span>
+          <button
+            onClick={() => setIsolatedPreview(null)}
+            className="flex items-center gap-1 underline text-xs font-bold"
+          >
+            <ArrowLeft className="w-3.5 h-3.5" /> Return to Authenticated Admin Portal
+          </button>
+        </div>
+        <TeacherDashboard onSwitchToAdmin={() => setIsolatedPreview(null)} />
+      </div>
+    );
+  }
+
+  if (isolatedPreview === 'parent') {
+    return (
+      <div className="relative">
+        <div className="bg-amber-500 text-black px-4 py-1.5 text-xs font-bold flex items-center justify-between sticky top-0 z-50 shadow-sm">
+          <span>[ISOLATED PREVIEW] Viewing Teammate Component: ParentDashboard</span>
+          <button
+            onClick={() => setIsolatedPreview(null)}
+            className="flex items-center gap-1 underline text-xs font-bold"
+          >
+            <ArrowLeft className="w-3.5 h-3.5" /> Return to Authenticated Admin Portal
+          </button>
+        </div>
+        <ParentDashboard />
+      </div>
+    );
+  }
+
+  if (isolatedPreview === 'qr') {
+    return (
+      <div className="relative">
+        <div className="bg-amber-500 text-black px-4 py-1.5 text-xs font-bold flex items-center justify-between sticky top-0 z-50 shadow-sm">
+          <span>[ISOLATED PREVIEW] Viewing Teammate Component: StudentCardsPrintPage</span>
+          <button
+            onClick={() => setIsolatedPreview(null)}
+            className="flex items-center gap-1 underline text-xs font-bold"
+          >
+            <ArrowLeft className="w-3.5 h-3.5" /> Return to Authenticated Admin Portal
+          </button>
+        </div>
+        <StudentCardsPrintPage />
+      </div>
+    );
+  }
+
+  // 7. Authenticated Admin flow
   return (
     <div className="relative min-h-screen">
-      {/* Dynamic Module Switcher for Mohamed Wael & Team Presentation */}
-      <div className="fixed bottom-4 right-4 z-50 bg-[#17213B] text-white px-3 py-2 rounded-full shadow-2xl flex items-center gap-1.5 border border-[#48547B]/50 backdrop-blur-md">
-        <span className="text-[11px] font-mono text-[#A8BDA6] px-2 hidden md:inline">EduTrack Modules:</span>
-        
-        {/* Mohamed Wael Modules */}
-        <button
-          onClick={() => setCurrentView('admin')}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold transition ${
-            currentView === 'admin' ? 'bg-[#174E50] text-white shadow-xs' : 'text-[#7B8794] hover:text-white'
-          }`}
-          title="Mohamed Wael (Week 1)"
-        >
-          <Shield className="w-3.5 h-3.5" />
-          <span>الأدمن (محمد وائل)</span>
-        </button>
-
-        <button
-          onClick={() => setCurrentView('teacher')}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold transition ${
-            currentView === 'teacher' ? 'bg-[#553B8F] text-white shadow-xs' : 'text-[#7B8794] hover:text-white'
-          }`}
-          title="Mohamed Wael (Week 2)"
-        >
-          <BookOpen className="w-3.5 h-3.5" />
-          <span>المعلم (محمد وائل)</span>
-        </button>
-
-        {/* Integrated Team Modules */}
-        <button
-          onClick={() => setCurrentView('parent')}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold transition ${
-            currentView === 'parent' ? 'bg-[#174E50] text-white shadow-xs' : 'text-[#7B8794] hover:text-white'
-          }`}
-          title="Youssef El-Qadi"
-        >
-          <UserCheck className="w-3.5 h-3.5" />
-          <span>ولي الأمر (يوسف)</span>
-        </button>
-
-        <button
-          onClick={() => setCurrentView('qr')}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold transition ${
-            currentView === 'qr' ? 'bg-[#4338CA] text-white shadow-xs' : 'text-[#7B8794] hover:text-white'
-          }`}
-          title="Abdelrahman Khodary"
-        >
-          <QrCode className="w-3.5 h-3.5" />
-          <span>كروت QR (عبدالرحمن)</span>
-        </button>
-      </div>
-
-      {/* Render Active View */}
-      {currentView === 'admin' && (
-        <AdminDashboard onSwitchToTeacher={() => setCurrentView('teacher')} />
-      )}
-      {currentView === 'teacher' && (
-        <TeacherDashboard onSwitchToAdmin={() => setCurrentView('admin')} />
-      )}
-      {currentView === 'parent' && (
-        <ParentDashboard />
-      )}
-      {currentView === 'qr' && (
-        <StudentCardsPrintPage />
+      <AdminDashboard onSwitchToTeacher={() => setIsolatedPreview('teacher')} />
+      
+      {/* Dev preview drawer for preserved teammate components */}
+      {import.meta.env.DEV && (
+        <div className="fixed bottom-3 left-3 z-40 hidden md:flex items-center gap-2 bg-[#17213B]/90 border border-[#48547B]/50 px-3 py-1.5 rounded-full text-[10px] text-slate-300 backdrop-blur-md">
+          <Eye className="w-3 h-3 text-[#A8BDA6]" />
+          <span className="font-semibold text-slate-200">Preview Teammate UIs:</span>
+          <button
+            onClick={() => setIsolatedPreview('parent')}
+            className="hover:text-white underline"
+          >
+            Parent
+          </button>
+          <span>•</span>
+          <button
+            onClick={() => setIsolatedPreview('qr')}
+            className="hover:text-white underline"
+          >
+            QR Cards
+          </button>
+        </div>
       )}
     </div>
+  );
+}
+
+export function App() {
+  return (
+    <AuthProvider>
+      <AppContent />
+    </AuthProvider>
   );
 }
 
