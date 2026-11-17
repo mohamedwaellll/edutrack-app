@@ -6,9 +6,24 @@
 -- 3. Adds enrolled_count automatic synchronization trigger
 -- =========================================================================
 
--- Step 1: Ensure extensions exist
-CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
-CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+-- Step 1: Ensure extensions exist safely
+DO $$ BEGIN
+  CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+EXCEPTION WHEN OTHERS THEN
+  NULL;
+END $$;
+
+DO $$ BEGIN
+  CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+EXCEPTION WHEN OTHERS THEN
+  NULL;
+END $$;
+
+-- Built-in uuid_generate_v4 fallback to gen_random_uuid() for maximum portability
+CREATE OR REPLACE FUNCTION public.uuid_generate_v4()
+RETURNS UUID AS $$
+  SELECT gen_random_uuid();
+$$ LANGUAGE sql;
 
 -- Step 2: Ensure is_admin() helper exists (SECURITY DEFINER avoids recursive RLS)
 CREATE OR REPLACE FUNCTION public.is_admin()
@@ -24,16 +39,21 @@ AS $$
   );
 $$;
 
--- Step 3: Trigger to prevent self-elevation to admin by non-admin users
+-- Step 3: Triggers to prevent self-elevation to admin by non-admin users
 CREATE OR REPLACE FUNCTION public.check_profile_role_update()
 RETURNS TRIGGER
 LANGUAGE plpgsql
-SECURITY DEFINER
 SET search_path = public
 AS $$
 BEGIN
   IF NEW.role IS DISTINCT FROM OLD.role THEN
-    IF NOT public.is_admin() THEN
+    -- Allow if caller is database superuser/maintenance role (SQL Editor, psql, migrations, service_role)
+    -- OR if caller is already an admin
+    IF NOT (
+      current_user IN ('postgres', 'supabase_admin', 'service_role')
+      OR (SELECT current_setting('request.jwt.claim.role', true)) = 'service_role'
+      OR public.is_admin()
+    ) THEN
       RAISE EXCEPTION 'Unauthorized: Only administrators can modify user roles';
     END IF;
   END IF;
@@ -47,6 +67,84 @@ CREATE TRIGGER tr_check_profile_role
 BEFORE UPDATE ON public.profiles
 FOR EACH ROW
 EXECUTE FUNCTION public.check_profile_role_update();
+
+-- Prevent unauthorized role assignment on profile INSERT
+CREATE OR REPLACE FUNCTION public.check_profile_role_insert()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SET search_path = public
+AS $$
+BEGIN
+  IF NEW.role = 'admin' THEN
+    IF NOT (
+      current_user IN ('postgres', 'supabase_admin', 'service_role')
+      OR (SELECT current_setting('request.jwt.claim.role', true)) = 'service_role'
+      OR public.is_admin()
+    ) THEN
+      RAISE EXCEPTION 'Unauthorized: Only administrators can assign the admin role';
+    END IF;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS tr_check_profile_role_insert ON public.profiles;
+CREATE TRIGGER tr_check_profile_role_insert
+BEFORE INSERT ON public.profiles
+FOR EACH ROW
+EXECUTE FUNCTION public.check_profile_role_insert();
+
+-- Stored procedure for secure initial admin provisioning
+-- Handles BOTH cases:
+-- Case 1: Auth user without a profile record -> INSERT
+-- Case 2: Auth user with an existing non-admin profile record -> UPDATE to 'admin'
+CREATE OR REPLACE FUNCTION public.provision_admin(
+  target_user_id UUID,
+  target_email TEXT DEFAULT NULL,
+  target_full_name TEXT DEFAULT NULL
+)
+RETURNS public.profiles
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  resolved_email TEXT;
+  resolved_name TEXT;
+  result_profile public.profiles;
+  jwt_role TEXT;
+BEGIN
+  jwt_role := COALESCE(current_setting('request.jwt.claim.role', true), '');
+
+  -- Reject any client caller (anon or authenticated) that is not already an admin
+  IF (jwt_role IN ('anon', 'authenticated') OR current_user IN ('anon', 'authenticated')) AND NOT public.is_admin() THEN
+    RAISE EXCEPTION 'Unauthorized: Only database administrators can provision admin privileges';
+  END IF;
+
+  BEGIN
+    SELECT email INTO resolved_email FROM auth.users WHERE id = target_user_id;
+  EXCEPTION WHEN OTHERS THEN
+    resolved_email := NULL;
+  END;
+
+  resolved_email := COALESCE(target_email, resolved_email, 'admin@edutrack.com');
+  resolved_name := COALESCE(target_full_name, 'System Administrator');
+
+  INSERT INTO public.profiles (id, email, full_name, role)
+  VALUES (target_user_id, resolved_email, resolved_name, 'admin')
+  ON CONFLICT (id) DO UPDATE SET
+    role = 'admin',
+    email = COALESCE(EXCLUDED.email, public.profiles.email),
+    full_name = COALESCE(EXCLUDED.full_name, public.profiles.full_name),
+    updated_at = NOW()
+  RETURNING * INTO result_profile;
+
+  RETURN result_profile;
+END;
+$$;
+
+REVOKE EXECUTE ON FUNCTION public.provision_admin(UUID, TEXT, TEXT) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.provision_admin(UUID, TEXT, TEXT) TO postgres, service_role;
 
 -- Step 4: Enrolled count synchronization trigger
 CREATE OR REPLACE FUNCTION public.sync_group_enrolled_count()

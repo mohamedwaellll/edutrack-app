@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { adminService } from '../services/adminService';
 import * as clientModule from '../lib/supabaseClient';
 
-describe('Milestone Integration Test: Authenticated Admin Student Enrollment Flow', () => {
+describe('Admin Flow Service Simulation (In-Memory Supabase Mock Unit Test)', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
   });

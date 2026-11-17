@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { AuthPortalStatus } from '../contexts/AuthContext';
 import { UserProfile } from '../types/database';
 
-describe('Auth & Role Authorization Gatekeeper Logic', () => {
+describe('Auth & Role Gatekeeper State Machine (Pure Unit Tests)', () => {
   // Pure logic function replicating the gatekeeper state machine in AuthContext
   function resolveAuthStatus({
     isConfigured,

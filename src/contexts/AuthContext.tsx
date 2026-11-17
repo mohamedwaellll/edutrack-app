@@ -1,5 +1,5 @@
-import React, { createContext, useContext, useEffect, useState, useMemo, useCallback } from 'react';
-import { User, Session, AuthError } from '@supabase/supabase-js';
+import React, { createContext, useContext, useEffect, useState, useMemo, useCallback, useRef } from 'react';
+import { User, Session } from '@supabase/supabase-js';
 import { supabase, isSupabaseConfigured, getSupabaseConfigStatus } from '../lib/supabaseClient';
 import { UserProfile, UserRole } from '../types/database';
 
@@ -35,64 +35,83 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  const activeRequestId = useRef(0);
   const isConfigured = useMemo(() => isSupabaseConfigured(), []);
 
-  const fetchProfileForUser = useCallback(async (currentUser: User | null): Promise<UserProfile | null> => {
-    if (!currentUser || !isConfigured) return null;
+  const fetchProfileForUser = useCallback(
+    async (currentUser: User | null): Promise<{ profile: UserProfile | null; error: string | null }> => {
+      if (!currentUser || !isConfigured) return { profile: null, error: null };
 
-    try {
-      const { data, error: profileErr } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', currentUser.id)
-        .maybeSingle();
+      try {
+        const { data, error: profileErr } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', currentUser.id)
+          .maybeSingle();
 
-      if (profileErr) {
-        console.error('Error fetching profile:', profileErr.message);
-        return null;
+        if (profileErr) {
+          console.error('Error fetching profile:', profileErr.message);
+          return { profile: null, error: profileErr.message };
+        }
+        return { profile: (data as UserProfile) || null, error: null };
+      } catch (err: any) {
+        console.error('Profile fetch exception:', err);
+        return { profile: null, error: err.message || 'Unknown network error' };
       }
-      return data as UserProfile | null;
-    } catch (err: any) {
-      console.error('Profile fetch exception:', err);
-      return null;
-    }
-  }, [isConfigured]);
+    },
+    [isConfigured]
+  );
 
-  const evaluateAuthState = useCallback(async (currentSession: Session | null) => {
-    if (!isConfigured) {
-      setStatus('unconfigured');
+  const evaluateAuthState = useCallback(
+    async (currentSession: Session | null) => {
+      const requestId = ++activeRequestId.current;
+
+      if (!isConfigured) {
+        setStatus('unconfigured');
+        setLoading(false);
+        return;
+      }
+
+      if (!currentSession || !currentSession.user) {
+        setUser(null);
+        setSession(null);
+        setProfile(null);
+        setStatus('unauthenticated');
+        setError(null);
+        setLoading(false);
+        return;
+      }
+
+      setUser(currentSession.user);
+      setSession(currentSession);
+      setLoading(true);
+
+      const { profile: userProfile, error: fetchErr } = await fetchProfileForUser(currentSession.user);
+
+      // Discard stale response if a newer auth request or sign-out was issued in the meantime
+      if (requestId !== activeRequestId.current) return;
+
+      setProfile(userProfile);
       setLoading(false);
-      return;
-    }
 
-    if (!currentSession || !currentSession.user) {
-      setUser(null);
-      setSession(null);
-      setProfile(null);
-      setStatus('unauthenticated');
-      setLoading(false);
-      return;
-    }
-
-    setUser(currentSession.user);
-    setSession(currentSession);
-
-    const userProfile = await fetchProfileForUser(currentSession.user);
-    setProfile(userProfile);
-
-    if (!userProfile) {
-      setStatus('missing_profile');
-      setError('Your login succeeded, but no profile record was found in the database. Please contact the administrator.');
-    } else if (userProfile.role === 'admin') {
-      setStatus('authenticated_admin');
-      setError(null);
-    } else {
-      setStatus('authenticated_non_admin');
-      setError(`Access denied. Account role is "${userProfile.role}". Admin privileges are required.`);
-    }
-
-    setLoading(false);
-  }, [isConfigured, fetchProfileForUser]);
+      if (fetchErr) {
+        // Distinguish network/database query errors from missing profiles
+        setStatus('unauthenticated');
+        setError(`Failed to load user profile: ${fetchErr}`);
+      } else if (!userProfile) {
+        // Genuinely missing profile row in public.profiles
+        setStatus('missing_profile');
+        setError('Your login succeeded, but no profile record was found in the database. Please contact the administrator.');
+      } else if (userProfile.role === 'admin') {
+        setStatus('authenticated_admin');
+        setError(null);
+      } else {
+        setStatus('authenticated_non_admin');
+        setError(`Access denied. Account role is "${userProfile.role}". Admin privileges are required.`);
+      }
+    },
+    [isConfigured, fetchProfileForUser]
+  );
 
   useEffect(() => {
     let mounted = true;
@@ -119,7 +138,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
 
     // Listen to auth events (login, logout, token refresh)
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, newSession) => {
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, newSession) => {
       if (!mounted) return;
       evaluateAuthState(newSession);
     });
@@ -164,6 +185,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const signOut = async () => {
+    // Invalidate any inflight profile fetches immediately
+    activeRequestId.current++;
+
     if (isConfigured) {
       await supabase.auth.signOut().catch((e) => console.warn('Sign out warning:', e));
     }
@@ -172,14 +196,32 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setProfile(null);
     setError(null);
     setStatus(isConfigured ? 'unauthenticated' : 'unconfigured');
+    setLoading(false);
   };
 
   const refreshProfile = async () => {
     if (!user) return;
-    const p = await fetchProfileForUser(user);
+    const requestId = ++activeRequestId.current;
+    setLoading(true);
+
+    const { profile: p, error: fetchErr } = await fetchProfileForUser(user);
+
+    if (requestId !== activeRequestId.current) return;
+
     setProfile(p);
-    if (p?.role === 'admin') {
+    setLoading(false);
+
+    if (fetchErr) {
+      setError(`Failed to refresh profile: ${fetchErr}`);
+    } else if (!p) {
+      setStatus('missing_profile');
+      setError('Your profile record no longer exists in the database. Please contact the administrator.');
+    } else if (p.role === 'admin') {
       setStatus('authenticated_admin');
+      setError(null);
+    } else {
+      setStatus('authenticated_non_admin');
+      setError(`Access denied. Account role is "${p.role}". Admin privileges are required.`);
     }
   };
 

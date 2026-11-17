@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { adminService } from '../services/adminService';
 import * as clientModule from '../lib/supabaseClient';
 
-describe('adminService Unit & Integration Tests', () => {
+describe('adminService Contract & Business Logic (Unit Tests)', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
   });
