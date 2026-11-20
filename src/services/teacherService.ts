@@ -1,214 +1,113 @@
 import { supabase, isSupabaseConfigured } from '../lib/supabaseClient';
-import { GradeRecord, TeacherFeedback } from '../types/database';
+import type { GradeRecord, TeacherFeedback } from '../types/database';
+import type { ServiceResult } from './adminService';
+import { getCairoDateString } from './attendanceService';
 
-export const MOCK_GRADES: GradeRecord[] = [
-  {
-    id: 'g-1',
-    student_id: 's-1',
-    student_name: 'Lara Hassan',
-    class_id: 'cls-1',
-    class_name: 'Grade 8A',
-    subject: 'Science',
-    assessment_title: 'Midterm Science Exam',
-    score: 96,
-    max_score: 100,
-    date: '2026-10-24',
-    type: 'exam',
-    notes: 'Exceptional mastery of solar system physics',
-  },
-  {
-    id: 'g-2',
-    student_id: 's-1',
-    student_name: 'Lara Hassan',
-    class_id: 'cls-1',
-    class_name: 'Grade 8A',
-    subject: 'Science',
-    assessment_title: 'Lab Experiment #3',
-    score: 94,
-    max_score: 100,
-    date: '2026-10-18',
-    type: 'assignment',
-    notes: 'Accurate measurements and neat documentation',
-  },
-  {
-    id: 'g-3',
-    student_id: 's-2',
-    student_name: 'Adam Nabil',
-    class_id: 'cls-2',
-    class_name: 'Grade 7B',
-    subject: 'Mathematics',
-    assessment_title: 'Algebra Quiz 2',
-    score: 88.5,
-    max_score: 100,
-    date: '2026-10-22',
-    type: 'quiz',
-    notes: 'Good conceptual grasp, minor arithmetic error',
-  },
-  {
-    id: 'g-4',
-    student_id: 's-3',
-    student_name: 'Youssef Ali',
-    class_id: 'cls-3',
-    class_name: 'Grade 9C',
-    subject: 'Science',
-    assessment_title: 'Chemistry Lab Report',
-    score: 82,
-    max_score: 100,
-    date: '2026-10-20',
-    type: 'assignment',
-    notes: 'Needs closer adherence to lab safety rules',
-  },
-  {
-    id: 'g-5',
-    student_id: 's-4',
-    student_name: 'Mariam Samir',
-    class_id: 'cls-1',
-    class_name: 'Grade 8A',
-    subject: 'Science',
-    assessment_title: 'Midterm Science Exam',
-    score: 92,
-    max_score: 100,
-    date: '2026-10-24',
-    type: 'exam',
-    notes: 'Consistent performance in thermodynamics questions',
-  },
-];
-
-export const MOCK_TEACHER_FEEDBACK: TeacherFeedback[] = [
-  {
-    id: 'fb-1',
-    teacher_id: 't-1',
-    teacher_name: 'Dr. Salma Farid',
-    student_id: 's-1',
-    student_name: 'Lara Hassan',
-    feedback_text: 'Lara is showing wonderful curiosity and steady progress in science. Her class participation has improved.',
-    is_parent_visible: true,
-    date: '2026-10-28',
-  },
-  {
-    id: 'fb-2',
-    teacher_id: 't-2',
-    teacher_name: 'Omar Adel',
-    student_id: 's-2',
-    student_name: 'Adam Nabil',
-    feedback_text: 'Adam is excelling in linear equations. Encouraged to join the mathematics olympiad preparation group.',
-    is_parent_visible: true,
-    date: '2026-10-29',
-  },
-];
-
+export interface CreateGradeInput {
+  student_id: string;
+  class_id: string;
+  assessment_title: string;
+  score: number;
+  max_score: number;
+  date: string;
+  type: GradeRecord['type'];
+  notes?: string;
+}
+export interface CreateFeedbackInput {
+  teacher_id: string;
+  student_id: string;
+  feedback_text: string;
+  is_parent_visible: boolean;
+}
+const gradeSelection = '*, students(full_name), groups(name, subject)';
+const feedbackSelection = '*, teachers(full_name), students(full_name)';
+const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const failure = <T>(error: string): ServiceResult<T> => ({ data: null, error });
+const message = (error: unknown) => error instanceof Error ? error.message : 'Unable to contact the database. Please try again.';
+interface GradeRow {
+  id: string; student_id: string; group_id: string; assessment_title: string;
+  score: number | string; max_score: number | string; assessment_date: string;
+  grade_type: GradeRecord['type']; remarks: string | null;
+  students: { full_name: string } | null;
+  groups: { name: string; subject: string | null } | null;
+}
+interface FeedbackRow {
+  id: string; teacher_id: string; student_id: string; feedback_text: string;
+  is_parent_visible: boolean; created_at: string;
+  teachers: { full_name: string } | null; students: { full_name: string } | null;
+}
+const toGrade = (row: GradeRow): GradeRecord => ({
+  id: row.id, student_id: row.student_id, student_name: row.students?.full_name ?? 'Unknown student',
+  class_id: row.group_id, class_name: row.groups?.name ?? 'Unknown group', subject: row.groups?.subject ?? '',
+  assessment_title: row.assessment_title, score: Number(row.score), max_score: Number(row.max_score),
+  date: row.assessment_date, type: row.grade_type, notes: row.remarks ?? '',
+});
+const toFeedback = (row: FeedbackRow): TeacherFeedback => ({
+  id: row.id, teacher_id: row.teacher_id, teacher_name: row.teachers?.full_name ?? 'Unknown teacher',
+  student_id: row.student_id, student_name: row.students?.full_name ?? 'Unknown student',
+  feedback_text: row.feedback_text, is_parent_visible: row.is_parent_visible,
+  date: getCairoDateString(new Date(row.created_at)),
+});
 export const teacherService = {
-  async getGrades(classId?: string): Promise<GradeRecord[]> {
-    if (!isSupabaseConfigured()) {
-      if (classId) return MOCK_GRADES.filter(g => g.class_id === classId || g.class_name === classId);
-      return MOCK_GRADES;
-    }
-
+  async getGrades(classId?: string): Promise<ServiceResult<GradeRecord[]>> {
+    if (!isSupabaseConfigured()) return failure('Supabase is not configured.');
     try {
-      let query = supabase.from('grades').select('*, students(full_name), groups(name)').order('created_at', { ascending: false });
-      if (classId) {
-        query = query.eq('group_id', classId);
-      }
+      let query = supabase.from('grades').select(gradeSelection).order('assessment_date', { ascending: false });
+      if (classId) query = query.eq('group_id', classId);
       const { data, error } = await query;
-      if (error || !data || data.length === 0) return MOCK_GRADES;
-
-      return data.map((d: any) => ({
-        id: d.id,
-        student_id: d.student_id,
-        student_name: d.students?.full_name || 'Student',
-        class_id: d.group_id,
-        class_name: d.groups?.name || 'Class',
-        subject: 'Science',
-        assessment_title: d.assessment_title,
-        score: Number(d.score),
-        max_score: Number(d.max_score),
-        date: d.assessment_date,
-        type: d.grade_type,
-        notes: d.remarks,
-      }));
-    } catch {
-      return MOCK_GRADES;
-    }
+      if (error) return failure(error.message);
+      return { data: ((data ?? []) as GradeRow[]).map(toGrade), error: null };
+    } catch (error) { return failure(message(error)); }
   },
-
-  async addGrade(grade: Omit<GradeRecord, 'id'>): Promise<boolean> {
-    if (!isSupabaseConfigured()) {
-      MOCK_GRADES.unshift({
-        id: `g-${Date.now()}`,
-        ...grade,
-      });
-      return true;
+  async addGrade(grade: CreateGradeInput): Promise<ServiceResult<GradeRecord>> {
+    if (!isSupabaseConfigured()) return failure('Supabase is not configured.');
+    if (!uuid.test(grade.student_id) || !uuid.test(grade.class_id)) return failure('Select a valid student and group.');
+    if (!grade.assessment_title.trim()) return failure('Assessment title is required.');
+    if (!Number.isFinite(grade.score) || !Number.isFinite(grade.max_score) || grade.max_score <= 0 ||
+        grade.max_score > 999.99 || grade.score < 0 || grade.score > grade.max_score) {
+      return failure('Score must be between 0 and the maximum. Maximum must be greater than 0 and at most 999.99.');
     }
-
+    if (!['exam', 'quiz', 'assignment', 'participation'].includes(grade.type)) return failure('Invalid assessment category.');
+    const parsed = new Date(`${grade.date}T00:00:00Z`);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(grade.date) || !Number.isFinite(parsed.getTime()) ||
+        parsed.toISOString().slice(0, 10) !== grade.date || grade.date > getCairoDateString()) {
+      return failure('Choose a valid assessment date no later than today in Cairo.');
+    }
     try {
-      const { error } = await supabase.from('grades').insert([
-        {
-          student_id: grade.student_id,
-          group_id: grade.class_id,
-          assessment_title: grade.assessment_title,
-          grade_type: grade.type,
-          score: grade.score,
-          max_score: grade.max_score,
-          assessment_date: grade.date,
-          remarks: grade.notes,
-        }
-      ]);
-      return !error;
-    } catch {
-      return false;
-    }
+      const { data, error } = await supabase.from('grades').insert({
+        student_id: grade.student_id, group_id: grade.class_id,
+        assessment_title: grade.assessment_title.trim(), grade_type: grade.type,
+        score: grade.score, max_score: grade.max_score, assessment_date: grade.date,
+        remarks: grade.notes?.trim() || null,
+      }).select(gradeSelection).single();
+      if (error) return failure(error.message);
+      if (!data) return failure('The database did not return the saved grade. Refresh before retrying.');
+      return { data: toGrade(data as GradeRow), error: null };
+    } catch (error) { return failure(message(error)); }
   },
-
-  async getFeedback(studentId?: string): Promise<TeacherFeedback[]> {
-    if (!isSupabaseConfigured()) {
-      if (studentId) return MOCK_TEACHER_FEEDBACK.filter(f => f.student_id === studentId);
-      return MOCK_TEACHER_FEEDBACK;
-    }
-
+  async getFeedback(studentId?: string): Promise<ServiceResult<TeacherFeedback[]>> {
+    if (!isSupabaseConfigured()) return failure('Supabase is not configured.');
     try {
-      let query = supabase.from('teacher_notes').select('*, teachers(full_name), students(full_name)').order('created_at', { ascending: false });
-      if (studentId) {
-        query = query.eq('student_id', studentId);
-      }
+      let query = supabase.from('teacher_notes').select(feedbackSelection).order('created_at', { ascending: false });
+      if (studentId) query = query.eq('student_id', studentId);
       const { data, error } = await query;
-      if (error || !data || data.length === 0) return MOCK_TEACHER_FEEDBACK;
-
-      return data.map((d: any) => ({
-        id: d.id,
-        teacher_id: d.teacher_id,
-        teacher_name: d.teachers?.full_name || 'Teacher',
-        student_id: d.student_id,
-        student_name: d.students?.full_name || 'Student',
-        feedback_text: d.feedback_text,
-        is_parent_visible: d.is_parent_visible,
-        date: d.created_at ? d.created_at.slice(0, 10) : '2026-11-03',
-      }));
-    } catch {
-      return MOCK_TEACHER_FEEDBACK;
-    }
+      if (error) return failure(error.message);
+      return { data: ((data ?? []) as FeedbackRow[]).map(toFeedback), error: null };
+    } catch (error) { return failure(message(error)); }
   },
-
-  async addFeedback(feedback: Omit<TeacherFeedback, 'id'>): Promise<boolean> {
-    if (!isSupabaseConfigured()) {
-      MOCK_TEACHER_FEEDBACK.unshift({
-        id: `fb-${Date.now()}`,
-        ...feedback,
-      });
-      return true;
-    }
-
+  async addFeedback(feedback: CreateFeedbackInput): Promise<ServiceResult<TeacherFeedback>> {
+    if (!isSupabaseConfigured()) return failure('Supabase is not configured.');
+    if (!uuid.test(feedback.student_id) || !uuid.test(feedback.teacher_id)) return failure('Select a valid student and teacher.');
+    if (!feedback.feedback_text.trim()) return failure('Feedback text is required.');
+    if (typeof feedback.is_parent_visible !== 'boolean') return failure('Choose feedback visibility.');
     try {
-      const { error } = await supabase.from('teacher_notes').insert([
-        {
-          teacher_id: feedback.teacher_id,
-          student_id: feedback.student_id,
-          feedback_text: feedback.feedback_text,
-          is_parent_visible: feedback.is_parent_visible,
-        }
-      ]);
-      return !error;
-    } catch {
-      return false;
-    }
-  }
+      const { data, error } = await supabase.from('teacher_notes').insert({
+        student_id: feedback.student_id, teacher_id: feedback.teacher_id,
+        feedback_text: feedback.feedback_text.trim(), is_parent_visible: feedback.is_parent_visible,
+      }).select(feedbackSelection).single();
+      if (error) return failure(error.message);
+      if (!data) return failure('The database did not return the saved feedback. Refresh before retrying.');
+      return { data: toFeedback(data as FeedbackRow), error: null };
+    } catch (error) { return failure(message(error)); }
+  },
 };

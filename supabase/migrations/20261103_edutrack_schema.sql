@@ -103,9 +103,9 @@ CREATE TABLE IF NOT EXISTS public.attendance (
     student_id UUID NOT NULL REFERENCES public.students(id) ON DELETE CASCADE,
     group_id UUID REFERENCES public.groups(id) ON DELETE SET NULL,
     status attendance_status NOT NULL DEFAULT 'Present',
-    check_in_time TIME NOT NULL DEFAULT CURRENT_TIME,
+    check_in_time TIME,
     date DATE NOT NULL DEFAULT CURRENT_DATE,
-    scan_method TEXT DEFAULT 'qr' CHECK (scan_method IN ('qr', 'manual')),
+    scan_method TEXT DEFAULT 'manual' CHECK (scan_method IN ('qr', 'manual')),
     scanned_by UUID,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     CONSTRAINT unique_daily_attendance UNIQUE(student_id, date)
@@ -164,24 +164,58 @@ AS $$
   );
 $$;
 
--- Trigger to prevent self-elevation to admin by non-admin users
+-- Trigger to prevent self-elevation to admin by non-admin users (Fail-Closed)
 CREATE OR REPLACE FUNCTION public.check_profile_role_update()
 RETURNS TRIGGER
 LANGUAGE plpgsql
 SET search_path = public
 AS $$
+DECLARE
+  is_authorized BOOLEAN := FALSE;
+  jwt_claims_text TEXT;
+  jwt_role TEXT := '';
 BEGIN
   IF NEW.role IS DISTINCT FROM OLD.role THEN
-    -- Allow if caller is database superuser/maintenance role (SQL Editor, psql, migrations, service_role)
-    -- OR if caller is already an admin
-    IF NOT (
-      current_user IN ('postgres', 'supabase_admin', 'service_role')
-      OR (SELECT current_setting('request.jwt.claim.role', true)) = 'service_role'
-      OR public.is_admin()
-    ) THEN
+    -- Check 1: Superuser / maintenance / database owner roles
+    IF current_user IN ('postgres', 'supabase_admin', 'service_role') THEN
+      is_authorized := TRUE;
+    END IF;
+
+    -- Check 2: Existing admin user
+    IF NOT is_authorized AND COALESCE(public.is_admin(), FALSE) = TRUE THEN
+      is_authorized := TRUE;
+    END IF;
+
+    -- Check 3: Supabase service_role claim check (fail-closed)
+    IF NOT is_authorized THEN
+      BEGIN
+        jwt_claims_text := current_setting('request.jwt.claims', true);
+        IF jwt_claims_text IS NOT NULL AND jwt_claims_text <> '' THEN
+          jwt_role := COALESCE((jwt_claims_text::jsonb ->> 'role'), '');
+        END IF;
+      EXCEPTION WHEN OTHERS THEN
+        jwt_role := '';
+      END;
+
+      IF jwt_role = '' THEN
+        BEGIN
+          jwt_role := COALESCE(current_setting('request.jwt.claim.role', true), '');
+        EXCEPTION WHEN OTHERS THEN
+          jwt_role := '';
+        END;
+      END IF;
+
+      IF jwt_role = 'service_role' THEN
+        is_authorized := TRUE;
+      END IF;
+    END IF;
+
+    -- Fail-closed: Only explicitly true authorization allows modification
+    IF is_authorized IS NOT TRUE THEN
       RAISE EXCEPTION 'Unauthorized: Only administrators can modify user roles';
     END IF;
   END IF;
+
   NEW.updated_at = NOW();
   RETURN NEW;
 END;
@@ -193,22 +227,58 @@ BEFORE UPDATE ON public.profiles
 FOR EACH ROW
 EXECUTE FUNCTION public.check_profile_role_update();
 
--- Prevent unauthorized role assignment on profile INSERT
+-- Prevent unauthorized role assignment on profile INSERT (Fail-Closed)
 CREATE OR REPLACE FUNCTION public.check_profile_role_insert()
 RETURNS TRIGGER
 LANGUAGE plpgsql
 SET search_path = public
 AS $$
+DECLARE
+  is_authorized BOOLEAN := FALSE;
+  jwt_claims_text TEXT;
+  jwt_role TEXT := '';
 BEGIN
   IF NEW.role = 'admin' THEN
-    IF NOT (
-      current_user IN ('postgres', 'supabase_admin', 'service_role')
-      OR (SELECT current_setting('request.jwt.claim.role', true)) = 'service_role'
-      OR public.is_admin()
-    ) THEN
+    -- Check 1: Superuser / maintenance / database owner roles
+    IF current_user IN ('postgres', 'supabase_admin', 'service_role') THEN
+      is_authorized := TRUE;
+    END IF;
+
+    -- Check 2: Existing admin user
+    IF NOT is_authorized AND COALESCE(public.is_admin(), FALSE) = TRUE THEN
+      is_authorized := TRUE;
+    END IF;
+
+    -- Check 3: Supabase service_role claim check (fail-closed)
+    IF NOT is_authorized THEN
+      BEGIN
+        jwt_claims_text := current_setting('request.jwt.claims', true);
+        IF jwt_claims_text IS NOT NULL AND jwt_claims_text <> '' THEN
+          jwt_role := COALESCE((jwt_claims_text::jsonb ->> 'role'), '');
+        END IF;
+      EXCEPTION WHEN OTHERS THEN
+        jwt_role := '';
+      END;
+
+      IF jwt_role = '' THEN
+        BEGIN
+          jwt_role := COALESCE(current_setting('request.jwt.claim.role', true), '');
+        EXCEPTION WHEN OTHERS THEN
+          jwt_role := '';
+        END;
+      END IF;
+
+      IF jwt_role = 'service_role' THEN
+        is_authorized := TRUE;
+      END IF;
+    END IF;
+
+    -- Fail-closed: Only explicitly true authorization allows admin assignment
+    IF is_authorized IS NOT TRUE THEN
       RAISE EXCEPTION 'Unauthorized: Only administrators can assign the admin role';
     END IF;
   END IF;
+
   RETURN NEW;
 END;
 $$;
@@ -234,15 +304,44 @@ SECURITY DEFINER
 SET search_path = public
 AS $$
 DECLARE
+  is_authorized BOOLEAN := FALSE;
+  jwt_claims_text TEXT;
+  jwt_role TEXT := '';
   resolved_email TEXT;
   resolved_name TEXT;
   result_profile public.profiles;
-  jwt_role TEXT;
 BEGIN
-  jwt_role := COALESCE(current_setting('request.jwt.claim.role', true), '');
+  -- Check 1: Direct database maintenance roles
+  IF current_user IN ('postgres', 'supabase_admin', 'service_role') THEN
+    is_authorized := TRUE;
+  END IF;
 
-  -- Reject any client caller (anon or authenticated) that is not already an admin
-  IF (jwt_role IN ('anon', 'authenticated') OR current_user IN ('anon', 'authenticated')) AND NOT public.is_admin() THEN
+  -- Check 2: service_role JWT
+  IF NOT is_authorized THEN
+    BEGIN
+      jwt_claims_text := current_setting('request.jwt.claims', true);
+      IF jwt_claims_text IS NOT NULL AND jwt_claims_text <> '' THEN
+        jwt_role := COALESCE((jwt_claims_text::jsonb ->> 'role'), '');
+      END IF;
+    EXCEPTION WHEN OTHERS THEN
+      jwt_role := '';
+    END;
+
+    IF jwt_role = '' THEN
+      BEGIN
+        jwt_role := COALESCE(current_setting('request.jwt.claim.role', true), '');
+      EXCEPTION WHEN OTHERS THEN
+        jwt_role := '';
+      END;
+    END IF;
+
+    IF jwt_role = 'service_role' THEN
+      is_authorized := TRUE;
+    END IF;
+  END IF;
+
+  -- Fail-closed enforcement:
+  IF is_authorized IS NOT TRUE THEN
     RAISE EXCEPTION 'Unauthorized: Only database administrators can provision admin privileges';
   END IF;
 
@@ -398,3 +497,70 @@ ON public.activity_logs FOR ALL
 TO authenticated
 USING (public.is_admin())
 WITH CHECK (public.is_admin());
+
+-- Trigger for attendance validation and integrity
+CREATE OR REPLACE FUNCTION public.validate_attendance_record()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  student_actual_group UUID;
+BEGIN
+  -- 1. Verify student exists and fetch assigned group
+  SELECT group_id INTO student_actual_group
+  FROM public.students
+  WHERE id = NEW.student_id;
+
+  IF student_actual_group IS NULL THEN
+    RAISE EXCEPTION 'Student does not exist or has no assigned group';
+  END IF;
+
+  -- 2. Reject mismatch between provided group_id and student actual group
+  IF NEW.group_id IS NOT NULL AND NEW.group_id <> student_actual_group THEN
+    RAISE EXCEPTION 'Student does not belong to the specified group';
+  END IF;
+
+  -- Auto-populate group_id from student if missing
+  IF NEW.group_id IS NULL THEN
+    NEW.group_id := student_actual_group;
+  END IF;
+
+  -- 3. Absent / Excused records must not contain a fabricated check-in time
+  IF NEW.status IN ('Absent', 'Excused') THEN
+    NEW.check_in_time := NULL;
+  ELSIF NEW.status IN ('Present', 'Late') AND NEW.check_in_time IS NULL THEN
+    NEW.check_in_time := CURRENT_TIME;
+  END IF;
+
+  -- 4. Derive/validate the recording user's identity using authenticated session
+  IF auth.uid() IS NOT NULL THEN
+    NEW.scanned_by := auth.uid();
+  END IF;
+
+  -- 5. Default scan_method to 'manual'
+  IF NEW.scan_method IS NULL OR NEW.scan_method = '' THEN
+    NEW.scan_method := 'manual';
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS tr_validate_attendance_record ON public.attendance;
+CREATE TRIGGER tr_validate_attendance_record
+BEFORE INSERT OR UPDATE ON public.attendance
+FOR EACH ROW
+EXECUTE FUNCTION public.validate_attendance_record();
+
+-- API Table & Routine Grants for authenticated and anon roles
+GRANT USAGE ON SCHEMA public TO anon, authenticated;
+GRANT SELECT ON public.profiles TO authenticated;
+GRANT SELECT, INSERT ON public.groups TO authenticated;
+GRANT SELECT, INSERT ON public.students TO authenticated;
+GRANT SELECT, INSERT ON public.teachers TO authenticated;
+GRANT SELECT, INSERT, UPDATE ON public.attendance TO authenticated;
+GRANT SELECT, INSERT ON public.activity_logs TO authenticated;
+GRANT EXECUTE ON FUNCTION public.is_admin() TO authenticated;
+REVOKE EXECUTE ON FUNCTION public.provision_admin FROM anon, authenticated;

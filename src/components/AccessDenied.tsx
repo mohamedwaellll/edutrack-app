@@ -3,9 +3,10 @@ import { ShieldAlert, LogOut, UserX, AlertTriangle, RefreshCw } from 'lucide-rea
 import { useAuth } from '../contexts/AuthContext';
 
 export const AccessDenied: React.FC = () => {
-  const { user, profile, role, status, signOut, refreshProfile, loading } = useAuth();
+  const { user, profile, role, status, error, signOut, refreshProfile, loading } = useAuth();
 
   const isMissingProfile = status === 'missing_profile';
+  const isProfileError = status === 'profile_error';
 
   return (
     <div className="min-h-screen bg-[#0B1024] text-white flex items-center justify-center p-6 relative overflow-hidden font-sans">
@@ -13,7 +14,9 @@ export const AccessDenied: React.FC = () => {
 
       <div className="max-w-md w-full bg-[#171638]/90 border border-rose-500/30 rounded-3xl p-8 text-center shadow-2xl relative z-10">
         <div className="w-16 h-16 rounded-2xl bg-rose-500/10 border border-rose-500/20 text-rose-400 flex items-center justify-center mx-auto mb-5">
-          {isMissingProfile ? (
+          {isProfileError ? (
+            <AlertTriangle className="w-8 h-8 text-amber-400" />
+          ) : isMissingProfile ? (
             <UserX className="w-8 h-8" />
           ) : (
             <ShieldAlert className="w-8 h-8" />
@@ -21,11 +24,19 @@ export const AccessDenied: React.FC = () => {
         </div>
 
         <h2 className="text-2xl font-black text-white tracking-tight mb-2">
-          {isMissingProfile ? 'Profile Record Missing' : 'Admin Privileges Required'}
+          {isProfileError
+            ? 'Profile Verification Error'
+            : isMissingProfile
+            ? 'Profile Record Missing'
+            : 'Admin Privileges Required'}
         </h2>
 
         <p className="text-xs text-[#C7B8ED] leading-relaxed mb-6">
-          {isMissingProfile ? (
+          {isProfileError ? (
+            <>
+              {error || 'Unable to verify your account permissions due to a network or database failure. Protected admin screens have been locked. Please retry or sign out.'}
+            </>
+          ) : isMissingProfile ? (
             <>
               Your account (<span className="text-white font-mono">{user?.email}</span>) is authenticated, but no matching record exists in <code className="bg-[#20294A] px-1.5 py-0.5 rounded text-[#70C9DC]">public.profiles</code>. Please ask an administrator to assign your profile record.
             </>

@@ -3,6 +3,7 @@ import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, act, waitFor } from '@testing-library/react';
 import { AuthProvider, useAuth } from '../contexts/AuthContext';
+import App from '../App';
 import { supabase } from '../lib/supabaseClient';
 import * as supabaseClientModule from '../lib/supabaseClient';
 
@@ -18,6 +19,13 @@ const TestConsumer: React.FC = () => {
       <button onClick={() => refreshProfile()} data-testid="refresh-btn">Refresh Profile</button>
     </div>
   );
+};
+
+// Polyfill ResizeObserver for JSDOM
+global.ResizeObserver = class ResizeObserver {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
 };
 
 describe('AuthProvider & Application Access Gates (Real Component Tests)', () => {
@@ -44,7 +52,7 @@ describe('AuthProvider & Application Access Gates (Real Component Tests)', () =>
     const mockUser = { id: 'admin-uuid-1', email: 'admin@edutrack.com' };
     const mockSession = { user: mockUser, access_token: 'fake-token' };
 
-    vi.spyOn(supabase.auth, 'getSession').mockResolvedValueOnce({
+    vi.spyOn(supabase.auth, 'getSession').mockResolvedValue({
       data: { session: mockSession as any },
       error: null,
     });
@@ -87,7 +95,7 @@ describe('AuthProvider & Application Access Gates (Real Component Tests)', () =>
       onProfileFetchStarted = resolve;
     });
 
-    vi.spyOn(supabase.auth, 'getSession').mockResolvedValueOnce({
+    vi.spyOn(supabase.auth, 'getSession').mockResolvedValue({
       data: { session: mockSession as any },
       error: null,
     });
@@ -210,12 +218,12 @@ describe('AuthProvider & Application Access Gates (Real Component Tests)', () =>
     expect(screen.getByTestId('user-id').textContent).toBe('user-b-uuid');
   });
 
-  it('4. Distinguishes profile-fetch errors versus genuinely missing profiles', async () => {
+  it('4. Distinguishes profile-fetch errors versus genuinely missing profiles (fail-closed)', async () => {
     const mockUser = { id: 'user-c-uuid', email: 'missing@edutrack.com' };
     const mockSession = { user: mockUser, access_token: 'token-c' };
 
     // Case 4A: Genuinely missing profile (data = null, error = null)
-    vi.spyOn(supabase.auth, 'getSession').mockResolvedValueOnce({
+    vi.spyOn(supabase.auth, 'getSession').mockResolvedValue({
       data: { session: mockSession as any },
       error: null,
     });
@@ -242,7 +250,7 @@ describe('AuthProvider & Application Access Gates (Real Component Tests)', () =>
     unmount();
 
     // Case 4B: Database / network error (error = { message: 'Connection refused' })
-    vi.spyOn(supabase.auth, 'getSession').mockResolvedValueOnce({
+    vi.spyOn(supabase.auth, 'getSession').mockResolvedValue({
       data: { session: mockSession as any },
       error: null,
     });
@@ -262,9 +270,9 @@ describe('AuthProvider & Application Access Gates (Real Component Tests)', () =>
     );
 
     await waitFor(() => {
-      // Must not claim "no profile record was found", reports database failure
-      expect(screen.getByTestId('status').textContent).toBe('unauthenticated');
-      expect(screen.getByTestId('error-message').textContent).toContain('Failed to load user profile: Connection refused');
+      // Must not claim "no profile record was found", reports database failure and fails closed
+      expect(screen.getByTestId('status').textContent).toBe('profile_error');
+      expect(screen.getByTestId('error-message').textContent).toContain('Failed to verify user profile: Connection refused');
     });
   });
 
@@ -274,7 +282,7 @@ describe('AuthProvider & Application Access Gates (Real Component Tests)', () =>
 
     let currentRole = 'admin';
 
-    vi.spyOn(supabase.auth, 'getSession').mockResolvedValueOnce({
+    vi.spyOn(supabase.auth, 'getSession').mockResolvedValue({
       data: { session: mockSession as any },
       error: null,
     });
@@ -313,6 +321,118 @@ describe('AuthProvider & Application Access Gates (Real Component Tests)', () =>
     await waitFor(() => {
       expect(screen.getByTestId('status').textContent).toBe('authenticated_non_admin');
       expect(screen.getByTestId('error-message').textContent).toContain('Account role is "teacher"');
+    });
+  });
+
+  it('6. Fail closed when profile refresh fails: replaces authenticated_admin with profile_error and hides protected screens', async () => {
+    const mockUser = { id: 'admin-uuid-6', email: 'admin@edutrack.com' };
+    const mockSession = { user: mockUser, access_token: 'token-6' };
+
+    let failRefresh = false;
+
+    vi.spyOn(supabase.auth, 'getSession').mockResolvedValue({
+      data: { session: mockSession as any },
+      error: null,
+    });
+
+    vi.spyOn(supabase, 'from').mockImplementation((): any => {
+      return {
+        select: () => ({
+          eq: () => ({
+            maybeSingle: () => {
+              if (failRefresh) {
+                return Promise.resolve({ data: null, error: { message: 'Network disconnected' } });
+              }
+              return Promise.resolve({
+                data: { id: 'admin-uuid-6', email: 'admin@edutrack.com', role: 'admin', full_name: 'Admin User' },
+                error: null,
+              });
+            },
+          }),
+        }),
+      };
+    });
+
+    render(
+      <AuthProvider>
+        <TestConsumer />
+      </AuthProvider>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId('status').textContent).toBe('authenticated_admin');
+    });
+
+    // Simulate subsequent network failure on refresh
+    failRefresh = true;
+
+    await act(async () => {
+      screen.getByTestId('refresh-btn').click();
+    });
+
+    await waitFor(() => {
+      // Must NOT remain authenticated_admin! Must fail closed to profile_error
+      expect(screen.getByTestId('status').textContent).toBe('profile_error');
+      expect(screen.getByTestId('error-message').textContent).toContain('Failed to verify user profile: Network disconnected');
+    });
+  });
+
+  it('7. Application access gate: locks protected admin dashboard and displays AccessDenied with retry when profile_error occurs', async () => {
+    const mockUser = { id: 'admin-uuid-7', email: 'admin@edutrack.com' };
+    const mockSession = { user: mockUser, access_token: 'token-7' };
+
+    let failQuery = false;
+
+    vi.spyOn(supabase.auth, 'getSession').mockResolvedValue({
+      data: { session: mockSession as any },
+      error: null,
+    });
+
+    vi.spyOn(supabase, 'from').mockImplementation((table: string): any => {
+      if (table === 'profiles') {
+        return {
+          select: () => ({
+            eq: () => ({
+              maybeSingle: () => {
+                if (failQuery) {
+                  return Promise.resolve({ data: null, error: { message: 'Database query timeout' } });
+                }
+                return Promise.resolve({
+                  data: { id: 'admin-uuid-7', email: 'admin@edutrack.com', role: 'admin', full_name: 'Admin User' },
+                  error: null,
+                });
+              },
+            }),
+          }),
+        };
+      }
+      return {
+        select: () => ({
+          order: () => Promise.resolve({ data: [], error: null }),
+        }),
+      };
+    });
+
+    const { unmount } = render(<App />);
+
+    // Initially passes gate into AdminDashboard
+    await waitFor(() => {
+      expect(screen.getByText('EduTrack Admin')).toBeDefined();
+    });
+
+    unmount();
+
+    // Now render with database failure during session/profile evaluation
+    failQuery = true;
+    render(<App />);
+
+    await waitFor(() => {
+      // With failQuery = true, the app access gate MUST render AccessDenied
+      expect(screen.getByText('Profile Verification Error')).toBeDefined();
+      expect(screen.getByText('Recheck Access')).toBeDefined();
+      expect(screen.getByText('Sign Out')).toBeDefined();
+      // AdminDashboard content MUST NOT be present
+      expect(screen.queryByText('EduTrack Admin')).toBeNull();
     });
   });
 });

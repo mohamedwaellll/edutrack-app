@@ -126,7 +126,8 @@ describe('Admin Flow Service Simulation (In-Memory Supabase Mock Unit Test)', ()
     expect(addResult.data?.full_name).toBe('Ziad Mansour');
     expect(addResult.data?.group_id).toBe(selectedGroup.id);
     expect(addResult.data?.student_code).toBe('ET-3099');
-    expect(addResult.data?.qr_code_hash).toContain('QR_ET-3099_');
+    expect(addResult.data?.qr_code_hash).toBeDefined();
+    expect(addResult.data?.qr_code_hash?.length).toBeGreaterThan(10);
 
     // STEP 4: Simulate page refresh / data reload from Supabase
     const refreshedStudentsResult = await adminService.getStudents();

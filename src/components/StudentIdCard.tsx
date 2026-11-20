@@ -1,12 +1,15 @@
+import React from "react";
 import { QRCodeSVG } from "qrcode.react";
 
 export type StudentCardData = {
   id: string;
   full_name: string;
-  grade?: string | null;
-  class_name?: string | null;
-  photo_url?: string | null;
-  qr_token: string;
+  student_code: string;
+  grade_level?: string | null;
+  group_name?: string | null;
+  group_id?: string | null;
+  qr_code_hash: string;
+  status?: string;
 };
 
 type Props = {
@@ -16,7 +19,7 @@ type Props = {
 
 export default function StudentIdCard({
   student,
-  centerName = "Center Name",
+  centerName = "EduTrack Center",
 }: Props) {
   return (
     <div
@@ -49,13 +52,13 @@ export default function StudentIdCard({
         </div>
 
         <div className="flex items-center gap-[3mm]">
-          {/* QR code (SVG, stays sharp when printed) */}
-          <div className="rounded-[2mm] border border-slate-200 bg-white p-[1.5mm]">
+          {/* QR code (SVG, stays sharp when printed, marginSize={2} gives proper quiet zone) */}
+          <div className="rounded-[2mm] border border-slate-200 bg-white p-[1mm]">
             <QRCodeSVG
-              value={student.qr_token}
-              size={92}
+              value={student.qr_code_hash}
+              size={88}
               level="M"
-              marginSize={0}
+              marginSize={2}
               bgColor="#ffffff"
               fgColor="#0f172a"
             />
@@ -63,35 +66,30 @@ export default function StudentIdCard({
 
           {/* Student info */}
           <div className="flex-1 space-y-[1mm]">
-            {student.photo_url && (
-              <img
-                src={student.photo_url}
-                alt=""
-                className="mb-[1mm] h-[14mm] w-[14mm] rounded-full border border-slate-200 object-cover"
-              />
-            )}
             <p
               dir="auto"
               className="text-[10pt] font-bold leading-tight text-slate-900"
             >
               {student.full_name}
             </p>
-            {student.grade && (
+            <p dir="auto" className="text-[7pt] text-slate-600">
+              Code: <span className="font-mono font-bold text-slate-800">{student.student_code}</span>
+            </p>
+            {student.grade_level && (
               <p dir="auto" className="text-[7pt] text-slate-600">
-                Grade: {student.grade}
+                Grade: {student.grade_level}
               </p>
             )}
-            {student.class_name && (
+            {student.group_name && (
               <p dir="auto" className="text-[7pt] text-slate-600">
-                Group: {student.class_name}
+                Group: {student.group_name}
               </p>
             )}
           </div>
         </div>
 
         <p className="text-center text-[5.5pt] text-slate-400">
-          ID: {student.id.slice(0, 8).toUpperCase()} • Show this card at the
-          entrance
+          ID: {student.student_code || student.id.slice(0, 8).toUpperCase()} • Show this card at the entrance
         </p>
       </div>
     </div>

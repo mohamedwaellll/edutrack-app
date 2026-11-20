@@ -40,22 +40,17 @@ function AppContent() {
     return <AuthPage />;
   }
 
-  // 4. Missing profile in public.profiles: show clear access state (never admin fallback)
-  if (status === 'missing_profile') {
+  // 4. Missing profile, non-admin account, or profile verification error: show clear access state (never admin fallback)
+  if (status === 'missing_profile' || status === 'authenticated_non_admin' || status === 'profile_error') {
     return <AccessDenied />;
   }
 
-  // 5. Non-admin account: show clear access state (never admin fallback)
-  if (status === 'authenticated_non_admin') {
-    return <AccessDenied />;
-  }
-
-  // 6. Isolated teammate component preview (if explicitly invoked by admin)
+  // Grades and feedback are a live admin-managed flow; other roles remain gated.
   if (isolatedPreview === 'teacher') {
     return (
       <div className="relative">
         <div className="bg-amber-500 text-black px-4 py-1.5 text-xs font-bold flex items-center justify-between sticky top-0 z-50 shadow-sm">
-          <span>[ISOLATED PREVIEW] Viewing Teammate Component: TeacherDashboard</span>
+          <span>Admin Portal: Grades &amp; Feedback</span>
           <button
             onClick={() => setIsolatedPreview(null)}
             className="flex items-center gap-1 underline text-xs font-bold"
@@ -88,7 +83,7 @@ function AppContent() {
   if (isolatedPreview === 'qr') {
     return (
       <div className="relative">
-        <div className="bg-amber-500 text-black px-4 py-1.5 text-xs font-bold flex items-center justify-between sticky top-0 z-50 shadow-sm">
+        <div className="bg-amber-500 text-black px-4 py-1.5 text-xs font-bold flex items-center justify-between sticky top-0 z-50 shadow-sm print:hidden">
           <span>[ISOLATED PREVIEW] Viewing Teammate Component: StudentCardsPrintPage</span>
           <button
             onClick={() => setIsolatedPreview(null)}
@@ -97,7 +92,7 @@ function AppContent() {
             <ArrowLeft className="w-3.5 h-3.5" /> Return to Authenticated Admin Portal
           </button>
         </div>
-        <StudentCardsPrintPage />
+        <StudentCardsPrintPage onBack={() => setIsolatedPreview(null)} />
       </div>
     );
   }
@@ -105,7 +100,10 @@ function AppContent() {
   // 7. Authenticated Admin flow
   return (
     <div className="relative min-h-screen">
-      <AdminDashboard onSwitchToTeacher={() => setIsolatedPreview('teacher')} />
+      <AdminDashboard 
+        onSwitchToTeacher={() => setIsolatedPreview('teacher')} 
+        onOpenStudentCards={() => setIsolatedPreview('qr')}
+      />
       
       {/* Dev preview drawer for preserved teammate components */}
       {import.meta.env.DEV && (

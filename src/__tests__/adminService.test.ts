@@ -118,8 +118,54 @@ describe('adminService Contract & Business Logic (Unit Tests)', () => {
       expect(capturedPayload.group_id).toBe(targetGroupId);
       expect(capturedPayload.full_name).toBe('Karim Tarek');
       expect(capturedPayload.student_code).toBe('ET-9901');
-      expect(capturedPayload.qr_code_hash).toContain('QR_ET-9901_');
+      // Verifies random unique QR hash generation
+      expect(capturedPayload.qr_code_hash).toBeDefined();
+      expect(capturedPayload.qr_code_hash.length).toBeGreaterThan(10);
       expect(capturedPayload.status).toBe('active');
+    });
+
+    it('preserves an existing or explicit qr_code_hash when provided', async () => {
+      vi.spyOn(clientModule, 'isSupabaseConfigured').mockReturnValue(true);
+
+      let capturedPayload: any = null;
+      const mockFrom = vi.fn().mockImplementation((table: string) => {
+        if (table === 'activity_logs') {
+          return { insert: vi.fn().mockResolvedValue({ data: null, error: null }) };
+        }
+        return {
+          insert: vi.fn().mockImplementation((payload) => {
+            capturedPayload = payload[0];
+            return {
+              select: vi.fn().mockReturnValue({
+                single: vi.fn().mockResolvedValue({
+                  data: {
+                    id: 'd1111111-1111-4111-8111-111111111111',
+                    ...capturedPayload,
+                    created_at: new Date().toISOString(),
+                    groups: { name: 'Grade 8A' },
+                  },
+                  error: null,
+                }),
+              }),
+            };
+          }),
+        };
+      });
+
+      // @ts-ignore
+      clientModule.supabase.from = mockFrom;
+
+      const explicitHash = '550e8400-e29b-41d4-a716-446655440000';
+      const result = await adminService.addStudent({
+        full_name: 'Existing Student',
+        student_code: 'ET-9902',
+        group_id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+        grade_level: 'Grade 8',
+        qr_code_hash: explicitHash,
+      });
+
+      expect(result.error).toBeNull();
+      expect(capturedPayload.qr_code_hash).toBe(explicitHash);
     });
 
     it('handles duplicate student codes gracefully with clean error message', async () => {
@@ -195,6 +241,274 @@ describe('adminService Contract & Business Logic (Unit Tests)', () => {
       const result = await adminService.getStudents();
       expect(result.data).toBeNull();
       expect(result.error).toBe('Database connection timeout');
+    });
+  });
+
+  describe('createTeacher validation & execution', () => {
+    it('returns error when Supabase is unconfigured', async () => {
+      vi.spyOn(clientModule, 'isSupabaseConfigured').mockReturnValue(false);
+
+      const res = await adminService.createTeacher({
+        full_name: 'Dr. Tariq',
+        subject: 'Math',
+        email: 'tariq@edutrack.edu',
+      });
+      expect(res.data).toBeNull();
+      expect(res.error).toContain('not configured');
+    });
+
+    it('rejects missing or too short full_name', async () => {
+      vi.spyOn(clientModule, 'isSupabaseConfigured').mockReturnValue(true);
+
+      const res = await adminService.createTeacher({
+        full_name: ' A ',
+        subject: 'Math',
+        email: 'tariq@edutrack.edu',
+      });
+      expect(res.data).toBeNull();
+      expect(res.error).toContain('minimum 2 characters');
+    });
+
+    it('rejects missing subject', async () => {
+      vi.spyOn(clientModule, 'isSupabaseConfigured').mockReturnValue(true);
+
+      const res = await adminService.createTeacher({
+        full_name: 'Dr. Tariq',
+        subject: '   ',
+        email: 'tariq@edutrack.edu',
+      });
+      expect(res.data).toBeNull();
+      expect(res.error).toContain('Teaching subject is required');
+    });
+
+    it('rejects malformed email', async () => {
+      vi.spyOn(clientModule, 'isSupabaseConfigured').mockReturnValue(true);
+
+      const res = await adminService.createTeacher({
+        full_name: 'Dr. Tariq',
+        subject: 'Math',
+        email: 'invalid-email-address',
+      });
+      expect(res.data).toBeNull();
+      expect(res.error).toContain('valid email address is required');
+    });
+
+    it('trims input, inserts teacher record, and converts email to lowercase', async () => {
+      vi.spyOn(clientModule, 'isSupabaseConfigured').mockReturnValue(true);
+
+      let capturedPayload: any = null;
+      const mockFrom = vi.fn().mockImplementation((table: string) => {
+        if (table === 'activity_logs') {
+          return {
+            insert: vi.fn().mockResolvedValue({ data: null, error: null }),
+          };
+        }
+        return {
+          insert: vi.fn().mockImplementation((payload) => {
+            capturedPayload = payload[0];
+            return {
+              select: vi.fn().mockReturnValue({
+                single: vi.fn().mockResolvedValue({
+                  data: {
+                    id: '11111111-2222-4333-8444-555555555555',
+                    ...capturedPayload,
+                    created_at: new Date().toISOString(),
+                  },
+                  error: null,
+                }),
+              }),
+            };
+          }),
+        };
+      });
+
+      // @ts-ignore
+      clientModule.supabase.from = mockFrom;
+
+      const res = await adminService.createTeacher({
+        full_name: '  Dr. Tariq Mahmoud  ',
+        subject: '  Physics  ',
+        email: '  TARIQ.M@EduTrack.EDU  ',
+        phone: '  +201099887766  ',
+      });
+
+      expect(res.error).toBeNull();
+      expect(res.data?.full_name).toBe('Dr. Tariq Mahmoud');
+      expect(res.data?.subject).toBe('Physics');
+      expect(res.data?.email).toBe('tariq.m@edutrack.edu');
+      expect(capturedPayload.user_id).toBeNull();
+    });
+
+    it('handles duplicate email (error code 23505) with clear friendly message', async () => {
+      vi.spyOn(clientModule, 'isSupabaseConfigured').mockReturnValue(true);
+
+      const mockFrom = vi.fn().mockImplementation((table: string) => {
+        return {
+          insert: vi.fn().mockReturnValue({
+            select: vi.fn().mockReturnValue({
+              single: vi.fn().mockResolvedValue({
+                data: null,
+                error: {
+                  code: '23505',
+                  message: 'duplicate key value violates unique constraint "idx_teachers_email_lower"',
+                },
+              }),
+            }),
+          }),
+        };
+      });
+
+      // @ts-ignore
+      clientModule.supabase.from = mockFrom;
+
+      const res = await adminService.createTeacher({
+        full_name: 'Sarah Nabil',
+        subject: 'Biology',
+        email: 'sarah.nabil@edutrack.edu',
+      });
+
+      expect(res.data).toBeNull();
+      expect(res.code).toBe('23505');
+      expect(res.error).toContain('already exists');
+    });
+  });
+
+  describe('updateGroupTeacher validation & execution', () => {
+    it('returns error when Supabase is unconfigured', async () => {
+      vi.spyOn(clientModule, 'isSupabaseConfigured').mockReturnValue(false);
+
+      const res = await adminService.updateGroupTeacher(
+        'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+        '11111111-1111-4111-8111-111111111111'
+      );
+      expect(res.data).toBeNull();
+      expect(res.error).toContain('not configured');
+    });
+
+    it('rejects invalid group UUID', async () => {
+      vi.spyOn(clientModule, 'isSupabaseConfigured').mockReturnValue(true);
+
+      const res = await adminService.updateGroupTeacher('invalid-uuid', null);
+      expect(res.data).toBeNull();
+      expect(res.error).toContain('valid group UUID is required');
+    });
+
+    it('rejects invalid teacher UUID when assigning', async () => {
+      vi.spyOn(clientModule, 'isSupabaseConfigured').mockReturnValue(true);
+
+      const res = await adminService.updateGroupTeacher(
+        'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+        'not-a-uuid'
+      );
+      expect(res.data).toBeNull();
+      expect(res.error).toContain('valid teacher UUID is required');
+    });
+
+    it('successfully assigns an existing teacher to a group', async () => {
+      vi.spyOn(clientModule, 'isSupabaseConfigured').mockReturnValue(true);
+
+      const groupId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+      const teacherId = '11111111-1111-4111-8111-111111111111';
+
+      const mockFrom = vi.fn().mockImplementation((table: string) => {
+        if (table === 'teachers') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                maybeSingle: vi.fn().mockResolvedValue({
+                  data: { id: teacherId, full_name: 'Mona Salem' },
+                  error: null,
+                }),
+              }),
+            }),
+          };
+        }
+        if (table === 'groups') {
+          return {
+            update: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                select: vi.fn().mockReturnValue({
+                  maybeSingle: vi.fn().mockResolvedValue({
+                    data: {
+                      id: groupId,
+                      name: 'Grade 8A',
+                      grade_level: 'Grade 8',
+                      subject: 'Science',
+                      room: 'Room 204',
+                      capacity: 30,
+                      teacher_id: teacherId,
+                      teachers: { full_name: 'Mona Salem' },
+                      created_at: new Date().toISOString(),
+                    },
+                    error: null,
+                  }),
+                }),
+              }),
+            }),
+          };
+        }
+        if (table === 'activity_logs') {
+          return {
+            insert: vi.fn().mockResolvedValue({ data: null, error: null }),
+          };
+        }
+        return {};
+      });
+
+      // @ts-ignore
+      clientModule.supabase.from = mockFrom;
+
+      const res = await adminService.updateGroupTeacher(groupId, teacherId);
+      expect(res.error).toBeNull();
+      expect(res.data?.teacher_id).toBe(teacherId);
+      expect(res.data?.teacher_name).toBe('Mona Salem');
+    });
+
+    it('successfully unassigns a teacher when null is provided', async () => {
+      vi.spyOn(clientModule, 'isSupabaseConfigured').mockReturnValue(true);
+
+      const groupId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+
+      const mockFrom = vi.fn().mockImplementation((table: string) => {
+        if (table === 'groups') {
+          return {
+            update: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                select: vi.fn().mockReturnValue({
+                  maybeSingle: vi.fn().mockResolvedValue({
+                    data: {
+                      id: groupId,
+                      name: 'Grade 8A',
+                      grade_level: 'Grade 8',
+                      subject: 'Science',
+                      room: 'Room 204',
+                      capacity: 30,
+                      teacher_id: null,
+                      teachers: null,
+                      created_at: new Date().toISOString(),
+                    },
+                    error: null,
+                  }),
+                }),
+              }),
+            }),
+          };
+        }
+        if (table === 'activity_logs') {
+          return {
+            insert: vi.fn().mockResolvedValue({ data: null, error: null }),
+          };
+        }
+        return {};
+      });
+
+      // @ts-ignore
+      clientModule.supabase.from = mockFrom;
+
+      const res = await adminService.updateGroupTeacher(groupId, null);
+      expect(res.error).toBeNull();
+      expect(res.data?.teacher_id).toBeNull();
+      expect(res.data?.teacher_name).toBe('Unassigned');
     });
   });
 });

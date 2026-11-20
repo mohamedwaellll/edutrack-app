@@ -1,27 +1,21 @@
-name: EduTrack CI Build & Quality Check
-
+name: EduTrack CI
 on:
   push:
-    branches: [ main, develop ]
+    branches: [main, develop, 'feature/**']
   pull_request:
-    branches: [ main, develop ]
-
+    branches: [main, develop]
+permissions:
+  contents: read
 jobs:
-  build-and-lint:
+  build-and-test:
     runs-on: ubuntu-latest
-
+    timeout-minutes: 15
     steps:
-    - name: Checkout Repository
-      uses: actions/checkout@v4
-
-    - name: Set up Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: 20
-        cache: 'npm'
-
-    - name: Install Dependencies
-      run: npm ci
-
-    - name: TypeScript Compile & Build
-      run: npm run build
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '26.8.1'
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run build

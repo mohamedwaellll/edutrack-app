@@ -39,24 +39,58 @@ AS $$
   );
 $$;
 
--- Step 3: Triggers to prevent self-elevation to admin by non-admin users
+-- Step 3: Triggers to prevent self-elevation to admin by non-admin users (Fail-Closed)
 CREATE OR REPLACE FUNCTION public.check_profile_role_update()
 RETURNS TRIGGER
 LANGUAGE plpgsql
 SET search_path = public
 AS $$
+DECLARE
+  is_authorized BOOLEAN := FALSE;
+  jwt_claims_text TEXT;
+  jwt_role TEXT := '';
 BEGIN
   IF NEW.role IS DISTINCT FROM OLD.role THEN
-    -- Allow if caller is database superuser/maintenance role (SQL Editor, psql, migrations, service_role)
-    -- OR if caller is already an admin
-    IF NOT (
-      current_user IN ('postgres', 'supabase_admin', 'service_role')
-      OR (SELECT current_setting('request.jwt.claim.role', true)) = 'service_role'
-      OR public.is_admin()
-    ) THEN
+    -- Check 1: Superuser / maintenance / database owner roles
+    IF current_user IN ('postgres', 'supabase_admin', 'service_role') THEN
+      is_authorized := TRUE;
+    END IF;
+
+    -- Check 2: Existing admin user
+    IF NOT is_authorized AND COALESCE(public.is_admin(), FALSE) = TRUE THEN
+      is_authorized := TRUE;
+    END IF;
+
+    -- Check 3: Supabase service_role claim check (fail-closed)
+    IF NOT is_authorized THEN
+      BEGIN
+        jwt_claims_text := current_setting('request.jwt.claims', true);
+        IF jwt_claims_text IS NOT NULL AND jwt_claims_text <> '' THEN
+          jwt_role := COALESCE((jwt_claims_text::jsonb ->> 'role'), '');
+        END IF;
+      EXCEPTION WHEN OTHERS THEN
+        jwt_role := '';
+      END;
+
+      IF jwt_role = '' THEN
+        BEGIN
+          jwt_role := COALESCE(current_setting('request.jwt.claim.role', true), '');
+        EXCEPTION WHEN OTHERS THEN
+          jwt_role := '';
+        END;
+      END IF;
+
+      IF jwt_role = 'service_role' THEN
+        is_authorized := TRUE;
+      END IF;
+    END IF;
+
+    -- Fail-closed: Only explicitly true authorization allows modification
+    IF is_authorized IS NOT TRUE THEN
       RAISE EXCEPTION 'Unauthorized: Only administrators can modify user roles';
     END IF;
   END IF;
+
   NEW.updated_at = NOW();
   RETURN NEW;
 END;
@@ -68,22 +102,58 @@ BEFORE UPDATE ON public.profiles
 FOR EACH ROW
 EXECUTE FUNCTION public.check_profile_role_update();
 
--- Prevent unauthorized role assignment on profile INSERT
+-- Prevent unauthorized role assignment on profile INSERT (Fail-Closed)
 CREATE OR REPLACE FUNCTION public.check_profile_role_insert()
 RETURNS TRIGGER
 LANGUAGE plpgsql
 SET search_path = public
 AS $$
+DECLARE
+  is_authorized BOOLEAN := FALSE;
+  jwt_claims_text TEXT;
+  jwt_role TEXT := '';
 BEGIN
   IF NEW.role = 'admin' THEN
-    IF NOT (
-      current_user IN ('postgres', 'supabase_admin', 'service_role')
-      OR (SELECT current_setting('request.jwt.claim.role', true)) = 'service_role'
-      OR public.is_admin()
-    ) THEN
+    -- Check 1: Superuser / maintenance / database owner roles
+    IF current_user IN ('postgres', 'supabase_admin', 'service_role') THEN
+      is_authorized := TRUE;
+    END IF;
+
+    -- Check 2: Existing admin user
+    IF NOT is_authorized AND COALESCE(public.is_admin(), FALSE) = TRUE THEN
+      is_authorized := TRUE;
+    END IF;
+
+    -- Check 3: Supabase service_role claim check (fail-closed)
+    IF NOT is_authorized THEN
+      BEGIN
+        jwt_claims_text := current_setting('request.jwt.claims', true);
+        IF jwt_claims_text IS NOT NULL AND jwt_claims_text <> '' THEN
+          jwt_role := COALESCE((jwt_claims_text::jsonb ->> 'role'), '');
+        END IF;
+      EXCEPTION WHEN OTHERS THEN
+        jwt_role := '';
+      END;
+
+      IF jwt_role = '' THEN
+        BEGIN
+          jwt_role := COALESCE(current_setting('request.jwt.claim.role', true), '');
+        EXCEPTION WHEN OTHERS THEN
+          jwt_role := '';
+        END;
+      END IF;
+
+      IF jwt_role = 'service_role' THEN
+        is_authorized := TRUE;
+      END IF;
+    END IF;
+
+    -- Fail-closed: Only explicitly true authorization allows admin assignment
+    IF is_authorized IS NOT TRUE THEN
       RAISE EXCEPTION 'Unauthorized: Only administrators can assign the admin role';
     END IF;
   END IF;
+
   RETURN NEW;
 END;
 $$;
@@ -109,15 +179,44 @@ SECURITY DEFINER
 SET search_path = public
 AS $$
 DECLARE
+  is_authorized BOOLEAN := FALSE;
+  jwt_claims_text TEXT;
+  jwt_role TEXT := '';
   resolved_email TEXT;
   resolved_name TEXT;
   result_profile public.profiles;
-  jwt_role TEXT;
 BEGIN
-  jwt_role := COALESCE(current_setting('request.jwt.claim.role', true), '');
+  -- Check 1: Direct database maintenance roles
+  IF current_user IN ('postgres', 'supabase_admin', 'service_role') THEN
+    is_authorized := TRUE;
+  END IF;
 
-  -- Reject any client caller (anon or authenticated) that is not already an admin
-  IF (jwt_role IN ('anon', 'authenticated') OR current_user IN ('anon', 'authenticated')) AND NOT public.is_admin() THEN
+  -- Check 2: service_role JWT
+  IF NOT is_authorized THEN
+    BEGIN
+      jwt_claims_text := current_setting('request.jwt.claims', true);
+      IF jwt_claims_text IS NOT NULL AND jwt_claims_text <> '' THEN
+        jwt_role := COALESCE((jwt_claims_text::jsonb ->> 'role'), '');
+      END IF;
+    EXCEPTION WHEN OTHERS THEN
+      jwt_role := '';
+    END;
+
+    IF jwt_role = '' THEN
+      BEGIN
+        jwt_role := COALESCE(current_setting('request.jwt.claim.role', true), '');
+      EXCEPTION WHEN OTHERS THEN
+        jwt_role := '';
+      END;
+    END IF;
+
+    IF jwt_role = 'service_role' THEN
+      is_authorized := TRUE;
+    END IF;
+  END IF;
+
+  -- Fail-closed enforcement:
+  IF is_authorized IS NOT TRUE THEN
     RAISE EXCEPTION 'Unauthorized: Only database administrators can provision admin privileges';
   END IF;
 

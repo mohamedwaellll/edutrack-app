@@ -9,7 +9,8 @@ export type AuthPortalStatus =
   | 'unauthenticated'
   | 'authenticated_admin'
   | 'authenticated_non_admin'
-  | 'missing_profile';
+  | 'missing_profile'
+  | 'profile_error';
 
 interface AuthContextValue {
   user: User | null;
@@ -96,8 +97,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       if (fetchErr) {
         // Distinguish network/database query errors from missing profiles
-        setStatus('unauthenticated');
-        setError(`Failed to load user profile: ${fetchErr}`);
+        // Fail closed: Do NOT leave user on protected screens
+        setStatus('profile_error');
+        setError(`Failed to verify user profile: ${fetchErr}`);
       } else if (!userProfile) {
         // Genuinely missing profile row in public.profiles
         setStatus('missing_profile');
@@ -212,7 +214,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setLoading(false);
 
     if (fetchErr) {
-      setError(`Failed to refresh profile: ${fetchErr}`);
+      // Fail closed: Replace previous authenticated_admin status with recoverable error state
+      setStatus('profile_error');
+      setError(`Failed to verify user profile: ${fetchErr}`);
     } else if (!p) {
       setStatus('missing_profile');
       setError('Your profile record no longer exists in the database. Please contact the administrator.');

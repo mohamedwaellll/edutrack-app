@@ -60,6 +60,7 @@ export interface CreateStudentInput {
   student_code?: string;
   group_id: string;
   grade_level: string;
+  qr_code_hash?: string;
   parent_name?: string | null;
   parent_phone?: string | null;
   status?: StudentStatus;
@@ -73,6 +74,18 @@ export interface CreateGroupInput {
   capacity?: number;
   teacher_id?: string | null;
   schedule?: string | null;
+}
+
+export interface CreateTeacherInput {
+  full_name: string;
+  subject: string;
+  email: string;
+  phone?: string | null;
+}
+
+export interface UpdateGroupTeacherInput {
+  groupId: string;
+  teacherId: string | null;
 }
 
 export type AttendanceStatus = 'Present' | 'Late' | 'Absent' | 'Excused';

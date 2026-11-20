@@ -1,3 +1,13 @@
+# EduTrack — بداية الفريق
+
+[ابدأ هنا](docs/TEAM_START_HERE.md) · [PDF عربي](docs/EduTrack_Team_Plan.pdf) · [حالة النسخة](docs/HANDOFF_STATUS.md) · [عقد الربط](docs/INTEGRATION_CONTRACT.md)
+
+نسخة بداية تطوير React/Vite وليست إعلانًا باكتمال المشروع. أول مهمة: تصحيحات إدارة المدرسين ثم ربط الأدوار. فرع ali القديم مختلف معماريًا ومحفوظ للرجوع إليه.
+
+تحقق محلي: 96/96 اختبارًا والبناء نجح. استخدم Node 26.8.1 وnpm ci. لا ترفع .env.
+
+---
+
 # ✦ EduTrack — Cosmic Educational Platform & Management System
 
 > **EduTrack combines a cinematic cosmic atmosphere with a calm, approachable educational interface.**  
@@ -39,9 +49,11 @@
 ```
 supabase/
 ├── migrations/
-│   ├── 20261103_edutrack_schema.sql           # مخطط قاعدة البيانات الأساسي وسياسات RLS
-│   └── 20261117_edutrack_admin_auth_upgrade.sql  # ترقية غير مدمرة للأنظمة القائمة
-└── seed.sql                                   # بيانات تجريبية اختيارية قابلة للتكرار بأمان
+│   ├── 20261103_edutrack_schema.sql                  # مخطط قاعدة البيانات الأساسي وسياسات RLS
+│   ├── 20261117_edutrack_admin_auth_upgrade.sql         # ترقية غير مدمرة للأنظمة القائمة
+│   ├── 20261118000001_edutrack_auth_triggers_fail_closed.sql # تصحيح أمني صارم (Fail-Closed) للتحقق من الصلاحيات
+│   └── 20261119000001_edutrack_manual_attendance_and_grants.sql # الميزات والصلاحيات الخاصة بالحضور اليدوي (Milestone 2)
+└── seed.sql                                          # بيانات تجريبية اختيارية قابلة للتكرار بأمان
 ```
 
 ### 1. إعداد قاعدة بيانات جديدة (Fresh Database Setup)
@@ -53,11 +65,22 @@ supabase/
   - يحدّث تلقائياً عداد الطلاب في المجموعة `enrolled_count` عبر `tr_sync_group_enrolled_count`.
 
 ### 2. ترقية قاعدة بيانات موجودة مسبقاً (Non-Destructive Upgrade)
-إذا كانت قاعدة البيانات تحتوي بالفعل على بيانات ومخطط سابق، نفّذ ملف الترقية دون فقدان أو مسح أي بيانات:
-- `supabase/migrations/20261117_edutrack_admin_auth_upgrade.sql`
-  - يسقط السياسات المتساهلة القديمة (`USING (true)`).
-  - ينشئ دالة `public.is_admin()` الآمنة بـ `SECURITY DEFINER` لمنع الـ Recursion.
-  - يطبق سياسات RLS الصارمة ويحمي جدول `profiles` من الترقية الذاتية.
+إذا كانت قاعدة البيانات تحتوي بالفعل على بيانات ومخطط سابق، نفّذ ملفات الترقية بالترتيب دون فقدان أو مسح أي بيانات:
+1. `supabase/migrations/20261117_edutrack_admin_auth_upgrade.sql`
+   - يسقط السياسات المتساهلة القديمة (`USING (true)`).
+   - ينشئ دالة `public.is_admin()` الآمنة بـ `SECURITY DEFINER` لمنع الـ Recursion.
+   - يطبق سياسات RLS الصارمة ويحمي جدول `profiles` من الترقية الذاتية.
+
+2. `supabase/migrations/20261118000001_edutrack_auth_triggers_fail_closed.sql`
+   - تصحيح أمني صارم (Fail-Closed) للتحقق من صلاحيات التريجر ودالة `provision_admin`.
+   - معالجة قيم `NULL` وحالات منطق الثلاث قيم (3VL) لضمان الإغلاق التلقائي عند عدم توفر الصلاحيات الصريحة.
+   - دعم التوافق مع صيغة JSON الحديثة لـ PostgREST (`request.jwt.claims`) والإعدادات القديمة (`request.jwt.claim.role`).
+   - سحب صلاحيات التنفيذ عن أدوار العميل (`anon` و `authenticated`).
+
+3. `supabase/migrations/20261119000001_edutrack_manual_attendance_and_grants.sql`
+   - إسقاط قيود `NOT NULL` و `DEFAULT` على حقل `check_in_time` لضمان عدم توليد أوقات وهمية لحالات `Absent` و `Excused`.
+   - إضافة تريجر النزاهة `tr_validate_attendance_record` للتحقق من انتساب الطالب للمجموعة وتوليد `scanned_by` من الجلسة الموثقة حصراً.
+   - منح صلاحيات `SELECT, INSERT, UPDATE` على جدول `public.attendance` لدور `authenticated` دون فتح صلاحيات شاملة `ALL`.
 
 ### 3. البيانات التجريبية الاختيارية (Optional Repeatable Demo Seed)
 ملف البيانات التجريبية مفصول تماماً خارج سلسلة الميجريشن التلقائية في المسار القياسي `supabase/seed.sql`:
@@ -148,3 +171,16 @@ npm run dev
 - **لوحة تحكم ولي الأمر (`ParentDashboard.tsx` - يوسف القاضي):** متوفرة ومربوطة بنظام ألوان الـ Parent Portal ولوحة المعلم.
 - **كروت الطلاب ونظام الـ QR (`Qr code/` - عبد الرحمن خضري):** كروت تعريف الطلاب المزودة بـ QR Code.
 - **لوحات الشرف والتصميم (`UI-UX/` - مينا أيمن):** ملفات وتصميمات الشاشات الست المعتمدة.
+
+## Milestone 4: Live Grades & Feedback
+
+The admin portal now offers **Grades & Feedback** with real groups, students,
+persisted grades, explicit save errors and internal/parent-visible note preferences.
+Apply `supabase/migrations/20261120000003_edutrack_grades_and_feedback_integrity.sql`
+after the two Milestone 3 QR migrations, followed by
+`supabase/migrations/20261120000004_edutrack_assessment_lock_permissions.sql`
+to fix student-row lock permissions during grade/feedback saves. Both migrations have been tested locally;
+application to the hosted Supabase project must be verified separately.
+
+See [Milestone 4 setup and acceptance checks](docs/MILESTONE_4_GRADES_FEEDBACK.md).
+Teacher/parent login permissions and the parent dashboard integration remain separate work.
