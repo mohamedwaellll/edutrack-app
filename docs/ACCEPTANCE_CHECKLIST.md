@@ -19,7 +19,7 @@ Record PASS / FAIL / BLOCKED, tester/date/environment/evidence for every item.
 - [ ] Desktop/mobile navigation and Arabic rendering checked.
 - [ ] No secrets in Git; synthetic demo data only.
 - [ ] Presentation rehearsed with backup video and stated limitations.
-- [ ] Release PR develop -> main reviewed by Mohamed.
+- [ ] Tested the commit or ZIP shared with the team and recorded its version.
 
 Story: admin setup -> QR attendance -> teacher assessment -> student view -> parent view.
 A local mock/PGlite test is not a hosted/browser/physical-hardware test.

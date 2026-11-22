@@ -201,7 +201,7 @@ describe('AuthProvider & Application Access Gates (Real Component Tests)', () =>
     });
 
     await waitFor(() => {
-      expect(screen.getByTestId('status').textContent).toBe('authenticated_non_admin');
+      expect(screen.getByTestId('status').textContent).toBe('authenticated_student');
       expect(screen.getByTestId('user-id').textContent).toBe('user-b-uuid');
     });
 
@@ -214,7 +214,7 @@ describe('AuthProvider & Application Access Gates (Real Component Tests)', () =>
     });
 
     // User B's student status and identity must be preserved
-    expect(screen.getByTestId('status').textContent).toBe('authenticated_non_admin');
+    expect(screen.getByTestId('status').textContent).toBe('authenticated_student');
     expect(screen.getByTestId('user-id').textContent).toBe('user-b-uuid');
   });
 
@@ -319,8 +319,8 @@ describe('AuthProvider & Application Access Gates (Real Component Tests)', () =>
     });
 
     await waitFor(() => {
-      expect(screen.getByTestId('status').textContent).toBe('authenticated_non_admin');
-      expect(screen.getByTestId('error-message').textContent).toContain('Account role is "teacher"');
+      expect(screen.getByTestId('status').textContent).toBe('authenticated_teacher');
+      expect(screen.getByTestId('error-message').textContent).toBe('none');
     });
   });
 

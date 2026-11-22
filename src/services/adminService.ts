@@ -137,6 +137,10 @@ export const adminService = {
         return { data: null, error: teachersRes.error.message, code: teachersRes.error.code };
       }
 
+      if (groupsRes.error) {
+        return { data: null, error: groupsRes.error.message, code: groupsRes.error.code };
+      }
+
       const groups = groupsRes.data || [];
 
       const formatted: Teacher[] = (teachersRes.data || []).map((t: any) => {
@@ -511,7 +515,7 @@ export const adminService = {
     }
 
     const trimmedEmail = (input.email || '').trim().toLowerCase();
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    const emailRegex = /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/;
     if (!trimmedEmail || !emailRegex.test(trimmedEmail)) {
       return { data: null, error: 'A valid email address is required.' };
     }
@@ -519,12 +523,16 @@ export const adminService = {
     const trimmedPhone = (input.phone || '').trim() || null;
 
     try {
-      const payload = {
+      const payload: {
+        full_name: string;
+        subject: string;
+        email: string;
+        phone: string | null;
+      } = {
         full_name: trimmedName,
         subject: trimmedSubject,
         email: trimmedEmail,
         phone: trimmedPhone,
-        user_id: null, // Strictly do not accept client user_id in directory creation
       };
 
       const { data, error } = await supabase

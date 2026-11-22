@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { 
   Sparkles, 
   Circle, 
@@ -23,6 +23,7 @@ import {
   QrCode
 } from 'lucide-react';
 import { AttendanceQRScanner } from './AttendanceQRScanner';
+import { AccountLinkingPanel } from './AccountLinkingPanel';
 import { 
   LineChart, 
   Line, 
@@ -60,7 +61,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   onOpenStudentCards,
   adminName
 }) => {
-  const { user, profile, signOut } = useAuth();
+  const { user, profile, signOut, isRevalidating } = useAuth();
+  const isSessionRevalidating = Boolean(isRevalidating);
   const displayName = adminName || profile?.full_name || user?.email?.split('@')[0] || 'Administrator';
   const displayInitials = displayName
     .split(' ')
@@ -69,7 +71,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     .slice(0, 2)
     .toUpperCase();
 
-  const [activeTab, setActiveTab] = useState<'overview' | 'students' | 'teachers' | 'classes' | 'attendance' | 'settings'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'students' | 'teachers' | 'classes' | 'attendance' | 'linking' | 'settings'>('overview');
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successToast, setSuccessToast] = useState<string | null>(null);
@@ -127,6 +129,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [assignSubmitting, setAssignSubmitting] = useState(false);
   const [assignError, setAssignError] = useState<string | null>(null);
 
+  // Synchronous submission guards (prevents rapid double-click submissions)
+  const isTeacherSubmittingRef = useRef(false);
+  const isGroupAssignSubmittingRef = useRef(false);
+
+  // Discrete query error tracking (avoids masking failures as empty data)
+  const [teachersLoadError, setTeachersLoadError] = useState<string | null>(null);
+  const [classesLoadError, setClassesLoadError] = useState<string | null>(null);
+  const [teachersLoading, setTeachersLoading] = useState(false);
+
   // Manual Attendance state (Milestone 2)
   const [selectedAttendanceGroupId, setSelectedAttendanceGroupId] = useState('');
   const [selectedAttendanceDate, setSelectedAttendanceDate] = useState(() => getCairoDateString());
@@ -158,6 +169,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   }, []);
 
   const handleUpdateStatus = async (studentId: string, status: AttendanceStatus) => {
+    if (isSessionRevalidating) {
+      setRosterError('Verifying session permissions. Please wait before saving attendance.');
+      return;
+    }
     if (savingStudentId) return; // Prevent repeated submissions while saving
     setSavingStudentId(studentId);
     setRosterError(null);
@@ -203,51 +218,107 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     }
   };
 
+  const reloadTeachers = useCallback(async () => {
+    setTeachersLoading(true);
+    try {
+      const res = await adminService.getTeachers();
+      if (res.error) {
+        setTeachersLoadError(res.error);
+        return false;
+      }
+      if (res.data) {
+        setTeachersList(res.data);
+        setTeachersLoadError(null);
+        return true;
+      }
+      setTeachersLoadError('Failed to load teachers directory');
+      return false;
+    } catch (err: any) {
+      setTeachersLoadError(err?.message || 'Failed to load teachers directory');
+      return false;
+    } finally {
+      setTeachersLoading(false);
+    }
+  }, []);
+
   const loadData = useCallback(async () => {
     setLoading(true);
     setErrorMessage(null);
 
-    try {
-      const [overviewRes, classesRes, teachersRes, studentsRes] = await Promise.all([
-        adminService.getDashboardOverview(),
-        adminService.getClasses(),
-        adminService.getTeachers(),
-        adminService.getStudents(),
-      ]);
+    // Track failures per resource; preserve independently successful results.
+    // Wrap each promise to handle both returned ServiceResult errors and rejected promises.
+    const [overviewSettled, classesSettled, teachersSettled, studentsSettled] = await Promise.all([
+      adminService.getDashboardOverview()
+        .then((res) => ({ ok: !res.error && !!res.data, data: res.data, error: res.error }))
+        .catch((err: any) => ({ ok: false, data: null, error: err?.message || 'Failed to load dashboard overview' })),
 
-      if (overviewRes.error) {
-        setErrorMessage(overviewRes.error);
-      } else if (overviewRes.data) {
-        setStats(overviewRes.data.stats);
-        setWeeklyAttendance(overviewRes.data.weeklyAttendance);
-        setRecentActivities(overviewRes.data.recentActivities);
-        setStudentAttendance(overviewRes.data.studentAttendance);
-      }
+      adminService.getClasses()
+        .then((res) => ({ ok: !res.error && !!res.data, data: res.data, error: res.error }))
+        .catch((err: any) => ({ ok: false, data: null, error: err?.message || 'Failed to load classes and groups' })),
 
-      if (classesRes.data) {
-        setClassesList(classesRes.data);
-        if (classesRes.data.length > 0) {
-          const firstClassId = classesRes.data[0].id;
-          if (!newStudentGroupId) {
-            setNewStudentGroupId(firstClassId);
-          }
-          setSelectedAttendanceGroupId((prev) => prev || firstClassId);
-        }
-      }
+      adminService.getTeachers()
+        .then((res) => ({ ok: !res.error && !!res.data, data: res.data, error: res.error }))
+        .catch((err: any) => ({ ok: false, data: null, error: err?.message || 'Failed to load teachers directory' })),
 
-      if (teachersRes.data) {
-        setTeachersList(teachersRes.data);
-      }
+      adminService.getStudents()
+        .then((res) => ({ ok: !res.error && !!res.data, data: res.data, error: res.error }))
+        .catch((err: any) => ({ ok: false, data: null, error: err?.message || 'Failed to load students directory' })),
+    ]);
 
-      if (studentsRes.data) {
-        setStudentsList(studentsRes.data);
-      }
-    } catch (err: any) {
-      setErrorMessage(err.message || 'Failed to load database records.');
-    } finally {
-      setLoading(false);
+    const errors: string[] = [];
+
+    // 1. Overview
+    if (overviewSettled.ok && overviewSettled.data) {
+      setStats(overviewSettled.data.stats);
+      setWeeklyAttendance(overviewSettled.data.weeklyAttendance);
+      setRecentActivities(overviewSettled.data.recentActivities);
+      setStudentAttendance(overviewSettled.data.studentAttendance);
+    } else if (overviewSettled.error) {
+      errors.push(`Overview: ${overviewSettled.error}`);
     }
-  }, [newStudentGroupId]);
+
+    // 2. Classes
+    if (classesSettled.ok && classesSettled.data) {
+      setClassesLoadError(null);
+      setClassesList(classesSettled.data);
+      if (classesSettled.data.length > 0) {
+        const firstClassId = classesSettled.data[0].id;
+        setNewStudentGroupId((prev) => prev || firstClassId);
+        setSelectedAttendanceGroupId((prev) => prev || firstClassId);
+      }
+    } else {
+      const clsErr = classesSettled.error || 'Failed to load classes';
+      setClassesLoadError(clsErr);
+      errors.push(`Classes: ${clsErr}`);
+    }
+
+    // 3. Teachers
+    if (teachersSettled.ok && teachersSettled.data) {
+      setTeachersLoadError(null);
+      setTeachersList(teachersSettled.data);
+    } else {
+      const tchErr = teachersSettled.error || 'Failed to load teachers';
+      setTeachersLoadError(tchErr);
+      errors.push(`Teachers: ${tchErr}`);
+    }
+
+    // 4. Students
+    if (studentsSettled.ok && studentsSettled.data) {
+      setStudentsList(studentsSettled.data);
+    } else if (studentsSettled.error) {
+      errors.push(`Students: ${studentsSettled.error}`);
+    }
+
+    setLoading(false);
+
+    if (errors.length > 0) {
+      setErrorMessage(errors.join(' | '));
+      return false;
+    } else {
+      setErrorMessage(null);
+      return true;
+    }
+  }, []);
 
   useEffect(() => {
     if (activeTab === 'attendance' && selectedAttendanceGroupId && selectedAttendanceDate) {
@@ -262,6 +333,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   // Handle student creation
   const handleCreateStudent = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSessionRevalidating) {
+      setModalError('Verifying session permissions. Please wait before saving.');
+      return;
+    }
     setModalError(null);
 
     const trimmedName = newStudentName.trim();
@@ -312,6 +387,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   // Handle class group creation
   const handleCreateClass = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSessionRevalidating) {
+      setModalError('Verifying session permissions. Please wait before saving.');
+      return;
+    }
     setModalError(null);
 
     const trimmedName = newClassName.trim();
@@ -348,78 +427,129 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   // Handle teacher creation
   const handleCreateTeacher = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSessionRevalidating) {
+      setTeacherError('Verifying session permissions. Please wait before saving.');
+      return;
+    }
+    if (isTeacherSubmittingRef.current) return;
+    isTeacherSubmittingRef.current = true;
     setTeacherError(null);
 
     const trimmedName = newTeacherName.trim();
     if (!trimmedName || trimmedName.length < 2) {
       setTeacherError('Teacher full name is required (minimum 2 characters).');
+      isTeacherSubmittingRef.current = false;
       return;
     }
 
     const trimmedSubject = newTeacherSubject.trim();
     if (!trimmedSubject) {
       setTeacherError('Teaching subject is required.');
+      isTeacherSubmittingRef.current = false;
       return;
     }
 
     const trimmedEmail = newTeacherEmail.trim().toLowerCase();
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    const emailRegex = /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/;
     if (!trimmedEmail || !emailRegex.test(trimmedEmail)) {
       setTeacherError('A valid email address is required.');
+      isTeacherSubmittingRef.current = false;
       return;
     }
 
     setTeacherSubmitting(true);
-    const result = await adminService.createTeacher({
-      full_name: trimmedName,
-      subject: trimmedSubject,
-      email: trimmedEmail,
-      phone: newTeacherPhone.trim() || undefined,
-    });
-    setTeacherSubmitting(false);
+    let result;
+    try {
+      result = await adminService.createTeacher({
+        full_name: trimmedName,
+        subject: trimmedSubject,
+        email: trimmedEmail,
+        phone: newTeacherPhone.trim() || undefined,
+      });
+    } catch (err: any) {
+      result = { data: null, error: err.message || 'Failed to create teacher' };
+    }
 
-    if (result.error) {
+    if (result.error || !result.data) {
       // Retain entered form values so admin can correct email or details
-      setTeacherError(result.error);
+      setTeacherError(result.error || 'Failed to save teacher to database.');
+      setTeacherSubmitting(false);
+      isTeacherSubmittingRef.current = false;
       return;
     }
 
-    // Success
+    // Success in database: close modal and clear inputs immediately to prevent duplicate creation
     setShowAddTeacherModal(false);
+    const createdName = result.data.full_name;
     setNewTeacherName('');
     setNewTeacherSubject('');
     setNewTeacherEmail('');
     setNewTeacherPhone('');
-    setSuccessToast(`Teacher "${result.data?.full_name}" added to staff directory successfully!`);
-    setTimeout(() => setSuccessToast(null), 5000);
+    setTeacherSubmitting(false);
+    isTeacherSubmittingRef.current = false;
 
-    await loadData();
+    try {
+      const refreshed = await loadData();
+      if (refreshed === false) {
+        setSuccessToast(`Teacher "${createdName}" was saved, but directory refresh failed. Please click refresh.`);
+      } else {
+        setSuccessToast(`Teacher "${createdName}" added to staff directory successfully!`);
+      }
+      setTimeout(() => setSuccessToast(null), 5000);
+    } catch {
+      setSuccessToast(`Teacher "${createdName}" was saved, but directory refresh failed. Please click refresh.`);
+      setTimeout(() => setSuccessToast(null), 5000);
+    }
   };
 
   // Handle assigning / updating group teacher
   const handleUpdateGroupTeacher = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSessionRevalidating) {
+      setAssignError('Verifying session permissions. Please wait before saving.');
+      return;
+    }
     if (!editingGroupForTeacher) return;
+    if (isGroupAssignSubmittingRef.current) return;
+    isGroupAssignSubmittingRef.current = true;
     setAssignError(null);
 
     setAssignSubmitting(true);
-    const result = await adminService.updateGroupTeacher(
-      editingGroupForTeacher.id,
-      selectedTeacherForGroup || null
-    );
-    setAssignSubmitting(false);
+    let result;
+    try {
+      result = await adminService.updateGroupTeacher(
+        editingGroupForTeacher.id,
+        selectedTeacherForGroup || null
+      );
+    } catch (err: any) {
+      result = { data: null, error: err.message || 'Failed to update group teacher' };
+    }
 
-    if (result.error) {
-      setAssignError(result.error);
+    if (result.error || !result.data) {
+      setAssignError(result.error || 'Failed to update group instructor.');
+      setAssignSubmitting(false);
+      isGroupAssignSubmittingRef.current = false;
       return;
     }
 
-    const assignedName = result.data?.teacher_name || 'Unassigned';
-    setSuccessToast(`Group "${editingGroupForTeacher.name}" instructor set to ${assignedName}.`);
-    setTimeout(() => setSuccessToast(null), 5000);
+    const assignedName = result.data.teacher_name || 'Unassigned';
+    const groupName = editingGroupForTeacher.name;
     setEditingGroupForTeacher(null);
+    setAssignSubmitting(false);
+    isGroupAssignSubmittingRef.current = false;
 
-    await loadData();
+    try {
+      const refreshed = await loadData();
+      if (refreshed === false) {
+        setSuccessToast(`Group "${groupName}" instructor updated, but directory refresh failed. Please click refresh.`);
+      } else {
+        setSuccessToast(`Group "${groupName}" instructor set to ${assignedName}.`);
+      }
+      setTimeout(() => setSuccessToast(null), 5000);
+    } catch {
+      setSuccessToast(`Group "${groupName}" instructor updated, but directory refresh failed. Please click refresh.`);
+      setTimeout(() => setSuccessToast(null), 5000);
+    }
   };
 
   const navItems = [
@@ -428,6 +558,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     { id: 'classes', label: 'Classes & Groups', icon: 'circle' },
     { id: 'teachers', label: 'Teachers', icon: 'circle' },
     { id: 'attendance', label: 'Attendance', icon: 'circle' },
+    { id: 'linking', label: 'Account Linking', icon: 'circle' },
     { id: 'settings', label: 'Settings & DB', icon: 'circle' },
   ];
 
@@ -553,6 +684,19 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             </div>
           </div>
         </header>
+
+        {/* Session Revalidation Notice (non-disruptive: preserves active tabs and form drafts) */}
+        {isSessionRevalidating && (
+          <div
+            data-testid="session-revalidating-banner"
+            className="mb-6 p-3.5 rounded-2xl bg-amber-50 border border-amber-200 text-amber-900 text-xs flex items-center gap-2.5 shadow-xs"
+          >
+            <Loader2 className="w-4 h-4 text-amber-600 animate-spin shrink-0" />
+            <span className="font-semibold">
+              Re-verifying session permissions... Protected save actions are paused until confirmed.
+            </span>
+          </div>
+        )}
 
         {/* Success Toast */}
         {successToast && (
@@ -894,58 +1038,98 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 <Loader2 className="w-6 h-6 animate-spin text-[#174E50]" />
                 <span>Loading classes from Supabase...</span>
               </div>
-            ) : classesList.length === 0 ? (
-              <div className="py-12 text-center border-2 border-dashed border-[#E6E8E2] rounded-2xl p-8 space-y-2">
-                <BookOpen className="w-8 h-8 text-[#A8BDA6] mx-auto" />
-                <p className="text-sm font-semibold text-[#17213B]">No class groups found</p>
-                <p className="text-xs text-[#7B8794]">Create your first academic group to begin enrolling students.</p>
+            ) : classesLoadError && classesList.length === 0 ? (
+              <div className="py-8 px-6 text-center border-2 border-rose-200 bg-rose-50/50 rounded-2xl space-y-3">
+                <AlertCircle className="w-8 h-8 text-rose-600 mx-auto" />
+                <p className="text-sm font-semibold text-rose-900">Failed to load classes and groups</p>
+                <p className="text-xs text-rose-700">{classesLoadError}</p>
+                <button
+                  type="button"
+                  onClick={loadData}
+                  className="px-4 py-2 rounded-full bg-rose-700 text-white text-xs font-semibold hover:bg-rose-800 transition"
+                >
+                  Retry Loading Classes
+                </button>
               </div>
             ) : (
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-                {classesList.map((cls) => {
-                  const percentage = cls.capacity > 0 ? Math.round((cls.enrolled_count / cls.capacity) * 100) : 0;
-                  return (
-                    <div key={cls.id} className="p-5 rounded-2xl border border-[#E6E8E2] bg-[#F8F7F2]/40 hover:border-[#174E50] transition">
-                      <div className="flex items-center justify-between mb-3">
-                        <span className="px-3 py-1 rounded-full text-xs font-bold bg-[#D8E8DC] text-[#174E50]">
-                          {cls.name}
-                        </span>
-                        <span className="text-xs text-[#7B8794]">{cls.room || 'Room 204'}</span>
-                      </div>
-                      <h4 className="text-sm font-bold text-[#17213B]">{cls.subject || 'General'}</h4>
-                      <div className="flex items-center justify-between mt-1">
-                        <p className="text-xs text-[#7B8794]">
-                          Instructor: <span className="font-semibold text-[#17213B]">{cls.teacher_name || 'Unassigned'}</span>
+              <>
+                {classesLoadError && classesList.length > 0 && (
+                  <div className="p-4 rounded-2xl border border-rose-200 bg-rose-50/70 text-rose-900 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                    <div className="flex items-start gap-2.5">
+                      <AlertCircle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
+                      <div>
+                        <p className="text-xs font-bold text-rose-900">Classes & Groups Refresh Failed</p>
+                        <p className="text-xs text-rose-700">
+                          {classesLoadError} — Displaying previously loaded records (may be stale).
                         </p>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setEditingGroupForTeacher(cls);
-                            setSelectedTeacherForGroup(cls.teacher_id || '');
-                            setAssignError(null);
-                          }}
-                          className="px-2.5 py-1 rounded-lg border border-[#E6E8E2] bg-white text-[11px] font-semibold text-[#174E50] hover:bg-[#D8E8DC]/50 transition"
-                        >
-                          Assign / Change
-                        </button>
-                      </div>
-
-                      <div className="mt-4 pt-3 border-t border-[#E6E8E2]">
-                        <div className="flex justify-between text-xs text-[#7B8794] mb-1.5">
-                          <span>Enrolled Students</span>
-                          <span className="font-bold text-[#17213B]">{cls.enrolled_count} / {cls.capacity}</span>
-                        </div>
-                        <div className="w-full bg-[#E6E8E2] h-2 rounded-full overflow-hidden">
-                          <div 
-                            className="bg-[#174E50] h-full rounded-full transition-all" 
-                            style={{ width: `${Math.min(percentage, 100)}%` }}
-                          />
-                        </div>
                       </div>
                     </div>
-                  );
-                })}
-              </div>
+                    <button
+                      type="button"
+                      onClick={loadData}
+                      className="px-3 py-1.5 rounded-full bg-rose-700 text-white text-xs font-semibold hover:bg-rose-800 transition shrink-0"
+                    >
+                      Retry Loading Classes
+                    </button>
+                  </div>
+                )}
+
+                {classesList.length === 0 ? (
+                  <div className="py-12 text-center border-2 border-dashed border-[#E6E8E2] rounded-2xl p-8 space-y-2">
+                    <BookOpen className="w-8 h-8 text-[#A8BDA6] mx-auto" />
+                    <p className="text-sm font-semibold text-[#17213B]">No class groups found</p>
+                    <p className="text-xs text-[#7B8794]">Create your first academic group to begin enrolling students.</p>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+                    {classesList.map((cls) => {
+                      const percentage = cls.capacity > 0 ? Math.round((cls.enrolled_count / cls.capacity) * 100) : 0;
+                      return (
+                        <div key={cls.id} className="p-5 rounded-2xl border border-[#E6E8E2] bg-[#F8F7F2]/40 hover:border-[#174E50] transition">
+                          <div className="flex items-center justify-between mb-3">
+                            <span className="px-3 py-1 rounded-full text-xs font-bold bg-[#D8E8DC] text-[#174E50]">
+                              {cls.name}
+                            </span>
+                            <span className="text-xs text-[#7B8794]">{cls.room || 'Room 204'}</span>
+                          </div>
+                          <h4 className="text-sm font-bold text-[#17213B]">{cls.subject || 'General'}</h4>
+                          <div className="flex items-center justify-between mt-1">
+                            <p className="text-xs text-[#7B8794]">
+                              Instructor: <span className="font-semibold text-[#17213B]">{cls.teacher_name || 'Unassigned'}</span>
+                            </p>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditingGroupForTeacher(cls);
+                                setSelectedTeacherForGroup(cls.teacher_id || '');
+                                setAssignError(null);
+                                isGroupAssignSubmittingRef.current = false;
+                                setAssignSubmitting(false);
+                              }}
+                              className="px-2.5 py-1 rounded-lg border border-[#E6E8E2] bg-white text-[11px] font-semibold text-[#174E50] hover:bg-[#D8E8DC]/50 transition"
+                            >
+                              Assign / Change
+                            </button>
+                          </div>
+
+                          <div className="mt-4 pt-3 border-t border-[#E6E8E2]">
+                            <div className="flex justify-between text-xs text-[#7B8794] mb-1.5">
+                              <span>Enrolled Students</span>
+                              <span className="font-bold text-[#17213B]">{cls.enrolled_count} / {cls.capacity}</span>
+                            </div>
+                            <div className="w-full bg-[#E6E8E2] h-2 rounded-full overflow-hidden">
+                              <div
+                                className="bg-[#174E50] h-full rounded-full transition-all"
+                                style={{ width: `${Math.min(percentage, 100)}%` }}
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </>
             )}
           </div>
         )}
@@ -973,12 +1157,52 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               <div className="py-12 flex justify-center text-xs text-[#7B8794]">
                 <Loader2 className="w-6 h-6 animate-spin text-[#174E50]" />
               </div>
-            ) : teachersList.length === 0 ? (
-              <div className="py-12 text-center text-xs text-[#7B8794] border-2 border-dashed border-[#E6E8E2] rounded-2xl">
-                No teachers recorded in database yet.
+            ) : teachersLoadError && teachersList.length === 0 ? (
+              <div className="py-8 px-6 text-center border-2 border-rose-200 bg-rose-50/50 rounded-2xl space-y-3">
+                <AlertCircle className="w-8 h-8 text-rose-600 mx-auto" />
+                <p className="text-sm font-semibold text-rose-900">Failed to load teachers directory</p>
+                <p className="text-xs text-rose-700">{teachersLoadError}</p>
+                <button
+                  type="button"
+                  onClick={reloadTeachers}
+                  disabled={teachersLoading}
+                  className="px-4 py-2 rounded-full bg-rose-700 text-white text-xs font-semibold hover:bg-rose-800 transition flex items-center gap-1.5 mx-auto"
+                >
+                  {teachersLoading && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                  <span>Retry Loading Teachers</span>
+                </button>
               </div>
             ) : (
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+              <>
+                {teachersLoadError && teachersList.length > 0 && (
+                  <div className="p-4 rounded-2xl border border-rose-200 bg-rose-50/70 text-rose-900 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                    <div className="flex items-start gap-2.5">
+                      <AlertCircle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
+                      <div>
+                        <p className="text-xs font-bold text-rose-900">Faculty Directory Refresh Failed</p>
+                        <p className="text-xs text-rose-700">
+                          {teachersLoadError} — Displaying previously loaded records (may be stale).
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={reloadTeachers}
+                      disabled={teachersLoading}
+                      className="px-3 py-1.5 rounded-full bg-rose-700 text-white text-xs font-semibold hover:bg-rose-800 transition flex items-center gap-1.5 shrink-0"
+                    >
+                      {teachersLoading && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                      <span>Retry Loading Teachers</span>
+                    </button>
+                  </div>
+                )}
+
+                {teachersList.length === 0 ? (
+                  <div className="py-12 text-center text-xs text-[#7B8794] border-2 border-dashed border-[#E6E8E2] rounded-2xl">
+                    No teachers recorded in database yet.
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
                 {teachersList.map((tch) => (
                   <div key={tch.id} className="p-5 rounded-2xl border border-[#E6E8E2] bg-white flex flex-col justify-between gap-4 hover:border-[#174E50] transition shadow-xs">
                     <div className="flex items-start gap-4">
@@ -1018,8 +1242,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 ))}
               </div>
             )}
-          </div>
+          </>
         )}
+      </div>
+    )}
 
         {/* TAB 5: MANUAL ATTENDANCE & AUDIT */}
         {activeTab === 'attendance' && (
@@ -1067,6 +1293,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 classesList={classesList}
                 selectedGroupId={selectedAttendanceGroupId}
                 onSelectGroupId={(id) => setSelectedAttendanceGroupId(id)}
+                mutationsDisabled={isSessionRevalidating}
                 onAttendanceRecorded={() => {
                   if (selectedAttendanceGroupId && selectedAttendanceDate) {
                     loadAttendanceRoster(selectedAttendanceGroupId, selectedAttendanceDate);
@@ -1252,7 +1479,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                                     <button
                                       key={st}
                                       onClick={() => handleUpdateStatus(item.student_id, st)}
-                                      disabled={Boolean(savingStudentId)}
+                                      disabled={Boolean(savingStudentId) || isSessionRevalidating}
                                       className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all disabled:opacity-50 ${
                                         isActive
                                           ? st === 'Present'
@@ -1343,6 +1570,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             </>
             )}
           </div>
+        )}
+
+        {/* TAB 5B: ACCOUNT LINKING */}
+        {activeTab === 'linking' && (
+          <AccountLinkingPanel
+            onTeachersSynced={setTeachersList}
+            onStudentsSynced={setStudentsList}
+            mutationsDisabled={isSessionRevalidating}
+          />
         )}
 
         {/* TAB 6: SETTINGS & DB INFO */}
@@ -1490,7 +1726,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 </button>
                 <button
                   type="submit"
-                  disabled={modalSubmitting || classesList.length === 0}
+                  disabled={modalSubmitting || classesList.length === 0 || isSessionRevalidating}
                   className="px-5 py-2 rounded-full bg-[#174E50] text-white font-semibold hover:bg-[#174E50]/90 transition flex items-center gap-1.5 shadow-xs disabled:opacity-50"
                 >
                   {modalSubmitting ? (
@@ -1605,12 +1841,29 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 <label className="block text-[#7B8794] mb-1 font-semibold" htmlFor="classTeacherSelect">
                   Assign Instructor <span className="text-[10px] text-[#7B8794] font-normal">(Optional)</span>
                 </label>
+                {teachersLoadError && (
+                  <div className="mb-2 p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-xs flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-1.5">
+                      <AlertCircle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                      <span className="text-[11px]">Faculty directory unavailable ({teachersLoadError}). Group can be created unassigned.</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={reloadTeachers}
+                      disabled={teachersLoading}
+                      className="px-2.5 py-1 rounded-full bg-amber-700 text-white text-[10px] font-semibold hover:bg-amber-800 transition flex items-center gap-1 shrink-0"
+                    >
+                      {teachersLoading && <Loader2 className="w-3 h-3 animate-spin" />}
+                      <span>Retry</span>
+                    </button>
+                  </div>
+                )}
                 <select
                   id="classTeacherSelect"
                   value={newClassTeacherId}
                   onChange={(e) => setNewClassTeacherId(e.target.value)}
-                  disabled={modalSubmitting}
-                  className="w-full px-4 py-2.5 rounded-xl border border-[#E6E8E2] focus:outline-none focus:border-[#174E50] bg-white"
+                  disabled={modalSubmitting || (!!teachersLoadError && teachersList.length === 0)}
+                  className="w-full px-4 py-2.5 rounded-xl border border-[#E6E8E2] focus:outline-none focus:border-[#174E50] bg-white font-medium disabled:bg-slate-100 disabled:text-slate-500"
                 >
                   <option value="">Unassigned</option>
                   {teachersList.map((tch) => (
@@ -1632,7 +1885,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 </button>
                 <button
                   type="submit"
-                  disabled={modalSubmitting}
+                  disabled={modalSubmitting || isSessionRevalidating}
                   className="px-5 py-2 rounded-full bg-[#174E50] text-white font-semibold hover:bg-[#174E50]/90 transition flex items-center gap-1.5 shadow-xs disabled:opacity-50"
                 >
                   {modalSubmitting ? (
@@ -1746,8 +1999,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 </button>
                 <button
                   type="submit"
-                  disabled={teacherSubmitting}
-                  className="px-5 py-2 rounded-full bg-[#174E50] text-white font-semibold hover:bg-[#174E50]/90 transition flex items-center gap-1.5 shadow-xs disabled:opacity-50"
+                  disabled={teacherSubmitting || isSessionRevalidating}
+                  className="px-5 py-2 rounded-full bg-[#174E50] text-white font-semibold hover:bg-[#174E50]/90 transition flex items-center gap-1.5 shadow-xs disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {teacherSubmitting ? (
                     <>
@@ -1781,6 +2034,41 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               </button>
             </div>
 
+            {/* Current Instructor Display (Never represent loading failure as unassigned) */}
+            <div className="mb-3 p-3 rounded-xl bg-slate-50 border border-[#E6E8E2] text-xs flex items-center justify-between">
+              <span className="text-[#7B8794]">Current Assigned Instructor:</span>
+              <span className="font-semibold text-[#17213B]">
+                {editingGroupForTeacher.teacher_name || (editingGroupForTeacher.teacher_id ? 'Assigned Instructor' : 'Unassigned')}
+              </span>
+            </div>
+
+            {/* Directory Error / Unavailable Banner */}
+            {teachersLoadError && (
+              <div className="mb-4 p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-xs flex flex-col gap-2">
+                <div className="flex items-start gap-2">
+                  <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                  <div>
+                    <p className="font-semibold text-amber-900">Faculty directory unavailable</p>
+                    <p className="text-[11px] text-amber-700">{teachersLoadError}</p>
+                  </div>
+                </div>
+                <div className="flex items-center justify-between pt-1 border-t border-amber-200/60">
+                  <span className="text-[11px] text-amber-800">
+                    Assignment changes locked until directory is loaded.
+                  </span>
+                  <button
+                    type="button"
+                    onClick={reloadTeachers}
+                    disabled={teachersLoading}
+                    className="px-3 py-1 rounded-full bg-amber-700 text-white text-[11px] font-semibold hover:bg-amber-800 transition flex items-center gap-1 shrink-0"
+                  >
+                    {teachersLoading && <Loader2 className="w-3 h-3 animate-spin" />}
+                    <span>Retry Directory</span>
+                  </button>
+                </div>
+              </div>
+            )}
+
             {assignError && (
               <div className="mb-4 p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs flex items-start gap-2">
                 <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
@@ -1797,9 +2085,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   id="assignTeacherSelect"
                   value={selectedTeacherForGroup}
                   onChange={(e) => setSelectedTeacherForGroup(e.target.value)}
-                  disabled={assignSubmitting}
-                  className="w-full px-4 py-2.5 rounded-xl border border-[#E6E8E2] focus:outline-none focus:border-[#174E50] bg-white font-medium"
+                  disabled={assignSubmitting || !!teachersLoadError || teachersLoading}
+                  className="w-full px-4 py-2.5 rounded-xl border border-[#E6E8E2] focus:outline-none focus:border-[#174E50] bg-white font-medium disabled:bg-slate-100 disabled:text-slate-500 disabled:cursor-not-allowed"
                 >
+                  {editingGroupForTeacher.teacher_id && !teachersList.some((t) => t.id === editingGroupForTeacher.teacher_id) && (
+                    <option value={editingGroupForTeacher.teacher_id}>
+                      {editingGroupForTeacher.teacher_name || 'Current Instructor'} (Current)
+                    </option>
+                  )}
                   <option value="">Unassigned (No Instructor)</option>
                   {teachersList.map((tch) => (
                     <option key={tch.id} value={tch.id}>
@@ -1823,8 +2116,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 </button>
                 <button
                   type="submit"
-                  disabled={assignSubmitting}
-                  className="px-5 py-2 rounded-full bg-[#174E50] text-white font-semibold hover:bg-[#174E50]/90 transition flex items-center gap-1.5 shadow-xs disabled:opacity-50"
+                  disabled={assignSubmitting || !!teachersLoadError || teachersLoading || isSessionRevalidating}
+                  className="px-5 py-2 rounded-full bg-[#174E50] text-white font-semibold hover:bg-[#174E50]/90 transition flex items-center gap-1.5 shadow-xs disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {assignSubmitting ? (
                     <>

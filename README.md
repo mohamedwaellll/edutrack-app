@@ -1,186 +1,32 @@
-# EduTrack — بداية الفريق
+# EduTrack | نسخة اختبار الفريق
 
-[ابدأ هنا](docs/TEAM_START_HERE.md) · [PDF عربي](docs/EduTrack_Team_Plan.pdf) · [حالة النسخة](docs/HANDOFF_STATUS.md) · [عقد الربط](docs/INTEGRATION_CONTRACT.md)
+EduTrack نظام لإدارة الحضور والدرجات والملاحظات، بأربع بوابات للأدمن والمدرس والطالب ووليّ الأمر.
 
-نسخة بداية تطوير React/Vite وليست إعلانًا باكتمال المشروع. أول مهمة: تصحيحات إدارة المدرسين ثم ربط الأدوار. فرع ali القديم مختلف معماريًا ومحفوظ للرجوع إليه.
+## شغّل الديمو
 
-تحقق محلي: 96/96 اختبارًا والبناء نجح. استخدم Node 26.8.1 وnpm ci. لا ترفع .env.
+فكّ ضغط الحزمة أو استنسخ فرع `main` وافتح الطرفية في المجلد اللي فيه `package.json`. استخدم Node.js بالإصدار `26.8.1` المحدد في `.nvmrc`. على Windows شغّل:
 
----
-
-# ✦ EduTrack — Cosmic Educational Platform & Management System
-
-> **EduTrack combines a cinematic cosmic atmosphere with a calm, approachable educational interface.**  
-> Designed according to the **EduTrack Cosmic Fantasy Color Catalog** & Educational Warm Palette.
-
----
-
-## 👥 فريق العمل وتوزيع المهام (Team Structure)
-
-| العضو | الدور والمسؤولية | المهام الرئيسية |
-|---|---|---|
-| **محمد وائل** | **GitHub & Admin & Database Architect** | • إنشاء الـ Repo وإعداد الفروع والـ CI/CD<br>• لوحة تحكم الأدمن والسنتر (`AdminDashboard.tsx`)<br>• لوحة المعلم والدرجات (`TeacherDashboard.tsx`)<br>• جداول المجموعات والدرجات في Supabase ومراجعة الـ PRs |
-| **علي عبد القادر** | **Team Leader & Auth** | • إعداد مشروع Supabase وجدول المستخدمين<br>• صفحة الدخول وحماية المسارات (`AuthPage.tsx`)<br>• الدمج النهائي على الفرع الرئيسي |
-| **عبد الرحمن خضري** | **QR Systems & Hardware Integration** | • تصميم كروت الطلاب بـ QR Code فريد<br>• قارئ الكاميرا وتسجيل الحضور اللحظي |
-| **مينا أيمن** | **UI/UX & Student Portal** | • الهوية البصرية وتناسق الألوان<br>• لوحة تحكم الطالب (`StudentDashboard.tsx`)<br>• لوحة الشرف ونظام الأوسمة (Leaderboard & Badges) |
-| **يوسف القاضي** | **Parent & Analytics** | • لوحة تحكم ولي الأمر (`ParentDashboard.tsx`)<br>• الرسوم البيانية التفاعلية (Recharts)<br>• إشعارات الحضور الفورية عبر Supabase Realtime |
-
----
-
-## 🎨 الهوية البصرية ونظام الألوان (Design & Color Palette)
-
-تم بناء وتطوير لوحات التحكم بالاعتماد على درجات ألوان الكتالوج المعتمد:
-- **Admin Dashboard & Parent Portal Palette:**
-  - Background: `#F8F7F2` (Off-White)
-  - Cards: `#FFFFFF` (Light Card)
-  - Primary Educational Buttons: `#174E50` (Dark Teal)
-  - Accent / Supportive UI: `#A8BDA6` (Sage Green)
-  - Soft Badges: `#D8E8DC` (Mint), `#F2EBDD` (Warm Beige)
-  - Primary Text: `#26334A`
-  - Secondary Text: `#7B8794`
-  - Outlines / Dividers: `#E6E8E2`
-
----
-
-## 🗄️ إعداد قاعدة البيانات والترقيات (Supabase Database Migrations)
-
-يتبع المشروع معايير Supabase القياسية لضمان فرادة أرقام الميجريشن وفصل البيانات التجريبية عن سلسلة الترحيل التلقائي:
-
-```
-supabase/
-├── migrations/
-│   ├── 20261103_edutrack_schema.sql                  # مخطط قاعدة البيانات الأساسي وسياسات RLS
-│   ├── 20261117_edutrack_admin_auth_upgrade.sql         # ترقية غير مدمرة للأنظمة القائمة
-│   ├── 20261118000001_edutrack_auth_triggers_fail_closed.sql # تصحيح أمني صارم (Fail-Closed) للتحقق من الصلاحيات
-│   └── 20261119000001_edutrack_manual_attendance_and_grants.sql # الميزات والصلاحيات الخاصة بالحضور اليدوي (Milestone 2)
-└── seed.sql                                          # بيانات تجريبية اختيارية قابلة للتكرار بأمان
+```powershell
+npm.cmd ci
+npm.cmd run demo
 ```
 
-### 1. إعداد قاعدة بيانات جديدة (Fresh Database Setup)
-نفّذ الملف التالي في **Supabase SQL Editor**:
-- `supabase/migrations/20261103_edutrack_schema.sql`
-  - ينشئ الجداول: `profiles`, `groups`, `teachers`, `students`, `attendance`, `grades`, `teacher_notes`, `activity_logs`.
-  - يفعّل سياسات حماية صارمة (Row Level Security - RLS) تمنع الوصول غير المصرح به بدون دور `admin`.
-  - يمنع رفع الصلاحيات الذاتي للمستخدمين عبر Trigger `tr_check_profile_role` و `tr_check_profile_role_insert`.
-  - يحدّث تلقائياً عداد الطلاب في المجموعة `enrolled_count` عبر `tr_sync_group_enrolled_count`.
+على macOS أو Linux استخدم `npm` في الأمرين. افتح [الديمو المحلي](http://127.0.0.1:4179) بعد ظهور رسالة `EDUTRACK LOCAL DEMO READY`. الطرفية بتعرض حسابات الأدوار التجريبية وكلمة السر ومسار صورة بطاقة الطالب. الديمو يستخدم قاعدة محلية في الذاكرة ويبدأ ببيانات جديدة في كل تشغيل. اترك الطرفية مفتوحة أثناء الاختبار واضغط `Ctrl+C` للإيقاف.
 
-### 2. ترقية قاعدة بيانات موجودة مسبقاً (Non-Destructive Upgrade)
-إذا كانت قاعدة البيانات تحتوي بالفعل على بيانات ومخطط سابق، نفّذ ملفات الترقية بالترتيب دون فقدان أو مسح أي بيانات:
-1. `supabase/migrations/20261117_edutrack_admin_auth_upgrade.sql`
-   - يسقط السياسات المتساهلة القديمة (`USING (true)`).
-   - ينشئ دالة `public.is_admin()` الآمنة بـ `SECURITY DEFINER` لمنع الـ Recursion.
-   - يطبق سياسات RLS الصارمة ويحمي جدول `profiles` من الترقية الذاتية.
+## سيناريو اختبار سريع
 
-2. `supabase/migrations/20261118000001_edutrack_auth_triggers_fail_closed.sql`
-   - تصحيح أمني صارم (Fail-Closed) للتحقق من صلاحيات التريجر ودالة `provision_admin`.
-   - معالجة قيم `NULL` وحالات منطق الثلاث قيم (3VL) لضمان الإغلاق التلقائي عند عدم توفر الصلاحيات الصريحة.
-   - دعم التوافق مع صيغة JSON الحديثة لـ PostgREST (`request.jwt.claims`) والإعدادات القديمة (`request.jwt.claim.role`).
-   - سحب صلاحيات التنفيذ عن أدوار العميل (`anon` و `authenticated`).
+1. ادخل كأدمن وافتح **Attendance → QR Attendance Scanner**. اختر **Physics Group F1** وارفع [بطاقة ET-F-101](scripts/demo/et-f-101-card.png) من **Upload Image**. كرّر المسح بعد أكثر من 3 ثوانٍ وتحقق من بقاء سجل واحد بنفس وقت الوصول.
+2. من **Manual Roster** في نفس المجموعة والتاريخ، غيّر حالة الطالب من **Present** إلى **Absent**. حدّث العرض وتأكد إن الحالة اتحفظت ووقت الوصول اتمسح. لو هتكمل السيناريو بحالة حضور، ارجعها إلى **Present**.
+3. اخرج وادخل كمدرس وسجّل للطالب `18/20` وملاحظتين، واحدة **Internal Only** والتانية **Visible to Parent**.
+4. ادخل كطالب وتحقق من الحضور والدرجة. بعد كده ادخل كوليّ أمر وتأكد إن ملاحظة **Visible to Parent** وحدها بتظهر وإن البيانات بتفضل بعد تحديث الصفحة.
 
-3. `supabase/migrations/20261119000001_edutrack_manual_attendance_and_grants.sql`
-   - إسقاط قيود `NOT NULL` و `DEFAULT` على حقل `check_in_time` لضمان عدم توليد أوقات وهمية لحالات `Absent` و `Excused`.
-   - إضافة تريجر النزاهة `tr_validate_attendance_record` للتحقق من انتساب الطالب للمجموعة وتوليد `scanned_by` من الجلسة الموثقة حصراً.
-   - منح صلاحيات `SELECT, INSERT, UPDATE` على جدول `public.attendance` لدور `authenticated` دون فتح صلاحيات شاملة `ALL`.
+سجّل نتيجة كل خطوة باستخدام [قائمة اختبار الفريق](docs/ACCEPTANCE_CHECKLIST.md). عند الإبلاغ عن مشكلة، ابعت خطوات تكرارها والنتيجة المتوقعة واللي حصل فعليًا، ومعاها لقطة شاشة لو متاحة.
 
-### 3. البيانات التجريبية الاختيارية (Optional Repeatable Demo Seed)
-ملف البيانات التجريبية مفصول تماماً خارج سلسلة الميجريشن التلقائية في المسار القياسي `supabase/seed.sql`:
-- يستخدم معرّفات حتمية (Deterministic RFC 4122 UUIDs) وربطاً ديناميكياً بالمفاتيح الأجنبية (`(SELECT id FROM public.groups WHERE name = ...)`).
-- آمن 100% للتكرار: تنفيذ الملف عدة مرات لا ينشئ أي سجلات مكررة بفضل حراس `ON CONFLICT`.
-- يحافظ على بيانات المعلمين والطلاب الحاليين حتى لو كانت معرفاتهم مختلفة.
+## التحقق الآلي
 
----
-
-## 🔐 تعيين وترقية حساب الأدمن (Secure Admin Provisioning)
-
-لضمان الأمان الكامل، لا يحتوي كود المتصفح على أي `service_role` key ولا يسمح بالتسجيل العام بصلاحية أدمن.
-
-### الخطوة 1: إنشاء الحساب في Supabase Auth
-1. ادخل إلى **Supabase Dashboard** -> **Authentication** -> **Users** -> **Add User**.
-2. اختر **Create User** وأدخل البريد وكلمة المرور (مثال: `admin@edutrack.com`).
-3. انسخ الـ **User UID** الذي تم إنشاؤه.
-
-### الخطوة 2: منح صلاحية الأدمن في SQL Editor
-تم توفير إجراءين آمنين يتعاملان بسلاسة مع الحالتين:
-- **الحالة (أ): مستخدم Auth ليس له ملف تعريف (Profile) مسبق** -> ينشئ الملف بصلاحية `admin`.
-- **الحالة (ب): مستخدم Auth يمتلك ملف تعريف مسبق برتبة أخرى (مثل `student` أو `teacher`)** -> يرقيه إلى `admin`.
-
-#### الخيار الأول (عبر الدالة المخزنة الآمنة):
-```sql
-SELECT public.provision_admin('<USER_UID_HERE>', 'admin@edutrack.com', 'System Administrator');
+```powershell
+npm.cmd test
+npm.cmd run build
 ```
 
-#### الخيار الثاني (عبر استعلام SQL المباشر):
-```sql
-INSERT INTO public.profiles (id, email, full_name, role)
-VALUES ('<USER_UID_HERE>', 'admin@edutrack.com', 'System Administrator', 'admin')
-ON CONFLICT (id) DO UPDATE SET
-  role = 'admin',
-  updated_at = NOW();
-```
-
-> **ملاحظة أمنية**: تم سحب صلاحية تنفيذ `public.provision_admin` من أدوار المتصفح (`anon` و `authenticated`)، كما ترفض التريجرات وقواعد RLS أي محاولة من العميل لتعديل الرتبة إلى `admin` برمجياً من الفرونت إند.
-
----
-
-## 🚀 تشغيل واختبار المشروع محلياً (Local Setup & Verification)
-
-### 1. تثبيت الحزم (Dependencies):
-```cmd
-npm install
-```
-
-### 2. إعداد متغيرات البيئة (Environment Variables):
-انسخ ملف `.env.example` إلى `.env`:
-```cmd
-copy .env.example .env
-```
-املأ المفاتيح الخاصة بمشروعك في Supabase:
-```env
-VITE_SUPABASE_URL=https://your-project.supabase.co
-VITE_SUPABASE_ANON_KEY=your-anon-key-here
-```
-*(ملاحظة: إذا كانت المفاتيح غير معينة أو تحتوي على القيم الافتراضية، سيعرض التطبيق شاشة تنبيه واضحة `UnconfiguredNotice` توضح خطوات الربط).*
-
-### 3. تشغيل الاختبارات الآلية (Automated Tests):
-تم إعداد 6 حزم اختبار شاملة (30 اختباراً مؤكداً) تشمل محرك PostgreSQL حقيقي ومكونات React:
-```cmd
-npm test
-```
-تشمل الاختبارات:
-- `databaseExecution.test.ts` (6 اختبارات): اختبارات محرك PostgreSQL حقيقي (Isolated WebAssembly PG Engine) تنفذ الـ SQL فعلياً وتتحقق من الترقية، وتعيين الأدمن بالحالتين، وحماية RLS، ومنع رفع الرتب الذاتي، وتكرار الـ Seed دون تدبيل.
-- `authProvider.test.tsx` (5 اختبارات): اختبارات مكونات حقيقية لـ `AuthProvider` وبوابات الوصول، تتحقق من استرجاع الجلسة، وإلغاء الاستجابات المتأخرة عند تسجيل الخروج، وتفادي سباق الطلبات عند تبديل الحسابات، والتمييز الصريح بين فشل الشبكة وغياب البروفايل، وسحب الصلاحية عند تغيير الرتبة.
-- `adminService.test.ts` (7 اختبارات): اختبارات وحدة لمنطق خدمات الأدمن واسترجاع المصفوفات الفارغة والتأكد من حفظ `group_id`.
-- `authAndRoles.test.ts` (5 اختبارات): اختبارات وحدة لآلة حالات بوابات الوصول.
-- `databaseMigrations.test.ts` (6 اختبارات): فحص استاتيكي لملفات الـ SQL وفرادة الإصدارات وغياب الـ `USING (true)`.
-- `adminFlow.test.ts` (1 اختبار): محاكاة تدفق الأدمن الكامل من تسجيل الدخول إلى إضافة الطالب والتأكيد.
-
-### 4. بناء المشروع للإنتاج (Production Build):
-```cmd
-npm run build
-```
-
-### 5. تشغيل خادم التطوير (Dev Server):
-```cmd
-npm run dev
-```
-
----
-
-## 📱 مخرجات أعضاء الفريق المدمجة (Integrated Team Components)
-
-- **لوحة تحكم ولي الأمر (`ParentDashboard.tsx` - يوسف القاضي):** متوفرة ومربوطة بنظام ألوان الـ Parent Portal ولوحة المعلم.
-- **كروت الطلاب ونظام الـ QR (`Qr code/` - عبد الرحمن خضري):** كروت تعريف الطلاب المزودة بـ QR Code.
-- **لوحات الشرف والتصميم (`UI-UX/` - مينا أيمن):** ملفات وتصميمات الشاشات الست المعتمدة.
-
-## Milestone 4: Live Grades & Feedback
-
-The admin portal now offers **Grades & Feedback** with real groups, students,
-persisted grades, explicit save errors and internal/parent-visible note preferences.
-Apply `supabase/migrations/20261120000003_edutrack_grades_and_feedback_integrity.sql`
-after the two Milestone 3 QR migrations, followed by
-`supabase/migrations/20261120000004_edutrack_assessment_lock_permissions.sql`
-to fix student-row lock permissions during grade/feedback saves. Both migrations have been tested locally;
-application to the hosted Supabase project must be verified separately.
-
-See [Milestone 4 setup and acceptance checks](docs/MILESTONE_4_GRADES_FEEDBACK.md).
-Teacher/parent login permissions and the parent dashboard integration remain separate work.
+[دليل التشغيل وحالة التحقق](docs/HANDOFF_STATUS.md) · [عقد الربط وترتيب الهجرات](docs/INTEGRATION_CONTRACT.md)

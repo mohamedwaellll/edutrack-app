@@ -49,7 +49,7 @@ export const AuthPage: React.FC = () => {
         </div>
         <div className="hidden sm:flex items-center gap-2 text-xs text-[#C7B8ED] bg-[#171638]/70 border border-[#8562C5]/30 px-3.5 py-1.5 rounded-full backdrop-blur-md">
           <span className="w-2 h-2 rounded-full bg-[#70C9DC] animate-pulse"></span>
-          <span>Admin Authentication Portal</span>
+          <span>EduTrack Role Portal Sign In</span>
         </div>
       </header>
 
@@ -59,7 +59,7 @@ export const AuthPage: React.FC = () => {
         <div className="lg:col-span-7 space-y-6">
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-semibold bg-[#553B8F]/50 border border-[#8562C5]/40 text-[#C7B8ED]">
             <Rocket className="w-3.5 h-3.5 text-[#70C9DC]" />
-            <span>Center & School Administration System</span>
+            <span>Admin, Teacher, Student &amp; Parent Portal</span>
           </div>
 
           <h1 className="text-4xl sm:text-5xl lg:text-6xl font-black text-white leading-tight tracking-tight">
@@ -91,7 +91,7 @@ export const AuthPage: React.FC = () => {
           <div className="bg-[#171638]/80 border border-[#48547B]/60 rounded-3xl p-7 sm:p-9 shadow-2xl backdrop-blur-xl relative">
             <div className="mb-6">
               <h2 className="text-2xl font-bold text-white tracking-tight">Welcome back</h2>
-              <p className="text-xs text-[#C7B8ED] mt-1">Sign in with your administrator credentials</p>
+              <p className="text-xs text-[#C7B8ED] mt-1">Sign in with your EduTrack account credentials</p>
             </div>
 
             {/* Error banner */}
@@ -114,7 +114,7 @@ export const AuthPage: React.FC = () => {
                     type="email"
                     autoComplete="email"
                     required
-                    placeholder="admin@edutrack.com"
+                    placeholder="user@edutrack.com"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     disabled={submitting || loading}
@@ -155,7 +155,7 @@ export const AuthPage: React.FC = () => {
                   </>
                 ) : (
                   <>
-                    <span>Sign In to Admin Portal</span>
+                    <span>Sign In to EduTrack</span>
                     <ArrowRight className="w-4 h-4" />
                   </>
                 )}
@@ -163,7 +163,7 @@ export const AuthPage: React.FC = () => {
             </form>
 
             <div className="mt-6 pt-5 border-t border-[#48547B]/40 text-center text-[11px] text-[#7B8794]">
-              <span>Admin access only. User roles are validated through Supabase profiles.</span>
+              <span>Supports Admin, Teacher, Student, and Parent accounts validated via Supabase profiles.</span>
             </div>
           </div>
         </div>
@@ -171,7 +171,7 @@ export const AuthPage: React.FC = () => {
 
       {/* Footer */}
       <footer className="p-6 md:p-8 z-10 max-w-7xl mx-auto w-full text-center text-xs text-[#7B8794]">
-        EduTrack Cosmic Learning Platform • Authenticated Admin Flow
+        EduTrack Cosmic Learning Platform • Role-Based Portal Access
       </footer>
     </div>
   );

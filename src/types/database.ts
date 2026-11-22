@@ -139,3 +139,15 @@ export interface WeeklyAttendancePoint {
   day: string; // "Mon", "Tue", ...
   rate: number; // 92.4, 95.1 ...
 }
+
+export interface ParentStudentLink {
+  id: string;
+  parent_id: string;
+  student_id: string;
+  created_at: string;
+  created_by?: string | null;
+  parent_name?: string;
+  parent_email?: string;
+  student_name?: string;
+  student_code?: string;
+}

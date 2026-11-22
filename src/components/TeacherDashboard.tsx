@@ -3,14 +3,20 @@ import { ArrowLeft, Award, MessageSquare, Plus, RefreshCw, Sparkles } from 'luci
 import { teacherService } from '../services/teacherService';
 import { adminService } from '../services/adminService';
 import { getCairoDateString } from '../services/attendanceService';
+import { useOptionalAuth } from '../contexts/AuthContext';
 import type { GradeRecord, TeacherFeedback, GroupClass, Student, Teacher } from '../types/database';
 
-interface TeacherDashboardProps { onSwitchToAdmin?: () => void; teacherName?: string }
+interface TeacherDashboardProps { onSwitchToAdmin?: () => void; teacherName?: string; mutationsDisabled?: boolean }
 const panel = 'bg-white rounded-3xl p-6 border border-[#E6E8E2] space-y-4';
 const input = 'w-full px-3 py-2.5 rounded-xl border border-[#E6E8E2] bg-white focus:outline-none focus:ring-2 focus:ring-[#174E50]';
 const button = 'px-4 py-2.5 rounded-full bg-[#174E50] text-white text-sm font-semibold disabled:opacity-50 flex items-center justify-center gap-2';
 
-export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onSwitchToAdmin }) => {
+export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onSwitchToAdmin, mutationsDisabled = false }) => {
+  const auth = useOptionalAuth();
+  const isSessionRevalidating = Boolean(mutationsDisabled || auth?.isRevalidating);
+  const isSessionRevalidatingRef = useRef(isSessionRevalidating);
+  isSessionRevalidatingRef.current = isSessionRevalidating;
+
   const [classes, setClasses] = useState<GroupClass[]>([]);
   const [students, setStudents] = useState<Student[]>([]);
   const [teachers, setTeachers] = useState<Teacher[]>([]);
@@ -104,6 +110,10 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onSwitchToAd
   }
   async function save(event: React.FormEvent) {
     event.preventDefault();
+    if (isSessionRevalidatingRef.current) {
+      setFormError('Verifying session permissions. Please wait before saving.');
+      return;
+    }
     if (savingRef.current || !modal) return;
     if (!group || !activeStudents.some(student => student.id === studentId)) {
       setFormError('Choose an active student in the selected group.'); return;
@@ -153,6 +163,11 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onSwitchToAd
             <button className={button} onClick={() => { setNotice(''); void loadData(); }} disabled={loading || saving || !!modal}><RefreshCw size={16} /> Refresh</button>
           </div>
         </header>
+        {isSessionRevalidating && (
+          <p data-testid="teacher-revalidating-banner" role="status" className="p-4 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-sm font-semibold">
+            Re-verifying session permissions... Grade and feedback saves are paused until confirmed.
+          </p>
+        )}
         {loading && <p role="status">Loading saved records...</p>}
         {error && <div role="alert" className="p-4 rounded-xl bg-red-50 text-red-800">{error} <button className="underline ml-2" onClick={() => void loadData()}>Retry</button></div>}
         {notice && <p role="status" className="p-4 rounded-xl bg-emerald-50 text-emerald-800">{notice}</p>}
@@ -232,7 +247,7 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onSwitchToAd
               </select></label>}
               <label className="block space-y-1">{modal === 'grade' ? 'Remarks (optional)' : 'Feedback text'}<textarea className={input} rows={3} required={modal === 'feedback'} value={notes} onChange={event => setNotes(event.target.value)} /></label>
               {modal === 'feedback' && <label className="flex gap-2 items-center"><input type="checkbox" checked={parentVisible} onChange={event => setParentVisible(event.target.checked)} /> Allow parent visibility when parent access is enabled</label>}
-              <div className="flex justify-end gap-3"><button type="button" className="px-4 py-2 rounded-full border" onClick={() => setModal(null)}>Cancel</button><button type="submit" className={button}>{saving ? 'Saving...' : modal === 'grade' ? 'Save Grade' : 'Save Feedback'}</button></div>
+              <div className="flex justify-end gap-3"><button type="button" className="px-4 py-2 rounded-full border" onClick={() => setModal(null)}>Cancel</button><button type="submit" disabled={saving || isSessionRevalidating} className={button}>{saving ? 'Saving...' : modal === 'grade' ? 'Save Grade' : 'Save Feedback'}</button></div>
             </fieldset>
           </form>
         </div>

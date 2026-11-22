@@ -284,13 +284,59 @@ describe('adminService Contract & Business Logic (Unit Tests)', () => {
     it('rejects malformed email', async () => {
       vi.spyOn(clientModule, 'isSupabaseConfigured').mockReturnValue(true);
 
-      const res = await adminService.createTeacher({
-        full_name: 'Dr. Tariq',
-        subject: 'Math',
-        email: 'invalid-email-address',
+      const invalidEmails = [
+        'invalid-email-address',
+        'user name@example.com', // internal space
+        'user@@example.com',     // multiple @
+        'user@example.',         // missing suffix
+        'user@example',          // missing dot/suffix
+      ];
+
+      for (const email of invalidEmails) {
+        const res = await adminService.createTeacher({
+          full_name: 'Dr. Tariq',
+          subject: 'Math',
+          email,
+        });
+        expect(res.data).toBeNull();
+        expect(res.error).toContain('valid email address is required');
+      }
+    });
+
+    it('accepts valid short-domain email such as a@b.co', async () => {
+      vi.spyOn(clientModule, 'isSupabaseConfigured').mockReturnValue(true);
+
+      const mockFrom = vi.fn().mockImplementation((table: string) => {
+        if (table === 'activity_logs') {
+          return { insert: vi.fn().mockResolvedValue({ data: null, error: null }) };
+        }
+        return {
+          insert: vi.fn().mockImplementation((payload) => ({
+            select: vi.fn().mockReturnValue({
+              single: vi.fn().mockResolvedValue({
+                data: {
+                  id: '11111111-2222-4333-8444-555555555555',
+                  ...payload[0],
+                  created_at: new Date().toISOString(),
+                },
+                error: null,
+              }),
+            }),
+          })),
+        };
       });
-      expect(res.data).toBeNull();
-      expect(res.error).toContain('valid email address is required');
+
+      // @ts-ignore
+      clientModule.supabase.from = mockFrom;
+
+      const res = await adminService.createTeacher({
+        full_name: 'Dr. Aly',
+        subject: 'Math',
+        email: '  A@B.CO  ',
+      });
+
+      expect(res.error).toBeNull();
+      expect(res.data?.email).toBe('a@b.co');
     });
 
     it('trims input, inserts teacher record, and converts email to lowercase', async () => {
@@ -336,7 +382,8 @@ describe('adminService Contract & Business Logic (Unit Tests)', () => {
       expect(res.data?.full_name).toBe('Dr. Tariq Mahmoud');
       expect(res.data?.subject).toBe('Physics');
       expect(res.data?.email).toBe('tariq.m@edutrack.edu');
-      expect(capturedPayload.user_id).toBeNull();
+      expect('user_id' in capturedPayload).toBe(false);
+      expect((capturedPayload as any).user_id).toBeUndefined();
     });
 
     it('handles duplicate email (error code 23505) with clear friendly message', async () => {
@@ -509,6 +556,88 @@ describe('adminService Contract & Business Logic (Unit Tests)', () => {
       expect(res.error).toBeNull();
       expect(res.data?.teacher_id).toBeNull();
       expect(res.data?.teacher_name).toBe('Unassigned');
+    });
+  });
+
+  describe('getTeachers error handling and integrity', () => {
+    it('surfaces groups query errors and does not silently default to empty classes', async () => {
+      vi.spyOn(clientModule, 'isSupabaseConfigured').mockReturnValue(true);
+
+      const mockFrom = vi.fn().mockImplementation((table: string) => {
+        if (table === 'teachers') {
+          return {
+            select: vi.fn().mockReturnValue({
+              order: vi.fn().mockResolvedValue({
+                data: [
+                  {
+                    id: '11111111-1111-4111-8111-111111111111',
+                    full_name: 'Dr. Salma',
+                    subject: 'Science',
+                    email: 'salma@edutrack.edu',
+                    phone: null,
+                    created_at: new Date().toISOString(),
+                  },
+                ],
+                error: null,
+              }),
+            }),
+          };
+        }
+        if (table === 'groups') {
+          return {
+            select: vi.fn().mockReturnValue({
+              order: vi.fn().mockResolvedValue({
+                data: null,
+                error: { message: 'Failed to fetch groups relationship', code: 'PGRST500' },
+              }),
+            }),
+          };
+        }
+        return {};
+      });
+
+      // @ts-ignore
+      clientModule.supabase.from = mockFrom;
+
+      const res = await adminService.getTeachers();
+      expect(res.data).toBeNull();
+      expect(res.error).toBe('Failed to fetch groups relationship');
+      expect(res.code).toBe('PGRST500');
+    });
+
+    it('surfaces teachers query errors', async () => {
+      vi.spyOn(clientModule, 'isSupabaseConfigured').mockReturnValue(true);
+
+      const mockFrom = vi.fn().mockImplementation((table: string) => {
+        if (table === 'teachers') {
+          return {
+            select: vi.fn().mockReturnValue({
+              order: vi.fn().mockResolvedValue({
+                data: null,
+                error: { message: 'Connection timeout', code: '57P01' },
+              }),
+            }),
+          };
+        }
+        if (table === 'groups') {
+          return {
+            select: vi.fn().mockReturnValue({
+              order: vi.fn().mockResolvedValue({
+                data: [],
+                error: null,
+              }),
+            }),
+          };
+        }
+        return {};
+      });
+
+      // @ts-ignore
+      clientModule.supabase.from = mockFrom;
+
+      const res = await adminService.getTeachers();
+      expect(res.data).toBeNull();
+      expect(res.error).toBe('Connection timeout');
     });
   });
 });

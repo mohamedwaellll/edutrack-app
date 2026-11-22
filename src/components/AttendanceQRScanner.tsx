@@ -15,12 +15,14 @@ import {
 } from 'lucide-react';
 import { attendanceService, QRAttendanceResult } from '../services/attendanceService';
 import { GroupClass } from '../types/database';
+import { useOptionalAuth } from '../contexts/AuthContext';
 
 interface AttendanceQRScannerProps {
   classesList: GroupClass[];
   selectedGroupId: string;
   onSelectGroupId: (groupId: string) => void;
   onAttendanceRecorded?: () => void;
+  mutationsDisabled?: boolean;
 }
 
 interface ScanFeedItem {
@@ -39,7 +41,13 @@ export const AttendanceQRScanner: React.FC<AttendanceQRScannerProps> = ({
   selectedGroupId,
   onSelectGroupId,
   onAttendanceRecorded,
+  mutationsDisabled = false,
 }) => {
+  const auth = useOptionalAuth();
+  const isSessionRevalidating = Boolean(mutationsDisabled || auth?.isRevalidating);
+  const isSessionRevalidatingRef = useRef(isSessionRevalidating);
+  isSessionRevalidatingRef.current = isSessionRevalidating;
+
   // Mode: camera vs image upload vs manual token
   const [scanMode, setScanMode] = useState<'camera' | 'upload' | 'manual'>('camera');
   
@@ -113,6 +121,15 @@ export const AttendanceQRScanner: React.FC<AttendanceQRScannerProps> = ({
   // Handle core scan submission
   const processQRCode = useCallback(
     async (rawCode: string) => {
+      if (isSessionRevalidatingRef.current) {
+        setLastScanResult({
+          success: false,
+          code: 'REVALIDATING',
+          message: 'Verifying session permissions. Scan was paused and not recorded — try again once confirmed.',
+        });
+        return;
+      }
+
       const token = rawCode.trim();
       if (!token) return;
 
@@ -189,22 +206,24 @@ export const AttendanceQRScanner: React.FC<AttendanceQRScannerProps> = ({
       return;
     }
 
-    const video = videoRef.current;
-    const canvas = canvasRef.current;
-    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    if (!isSessionRevalidatingRef.current) {
+      const video = videoRef.current;
+      const canvas = canvasRef.current;
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
 
-    if (video.readyState === video.HAVE_ENOUGH_DATA && ctx) {
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      if (video.readyState === video.HAVE_ENOUGH_DATA && ctx) {
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-      const code = jsQR(imageData.data, imageData.width, imageData.height, {
-        inversionAttempts: 'dontInvert',
-      });
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const code = jsQR(imageData.data, imageData.width, imageData.height, {
+          inversionAttempts: 'dontInvert',
+        });
 
-      if (code && code.data) {
-        processQRCode(code.data);
+        if (code && code.data && !isSessionRevalidatingRef.current) {
+          processQRCode(code.data);
+        }
       }
     }
 
@@ -226,6 +245,10 @@ export const AttendanceQRScanner: React.FC<AttendanceQRScannerProps> = ({
 
   // Start live camera
   const startCamera = async () => {
+    if (isSessionRevalidatingRef.current) {
+      setCameraError('Verifying session permissions. Please wait before starting the camera.');
+      return;
+    }
     if (!selectedGroupId) {
       setCameraError('Please select a target class group before starting the camera.');
       return;
@@ -247,8 +270,8 @@ export const AttendanceQRScanner: React.FC<AttendanceQRScannerProps> = ({
         },
       });
 
-      // Stop late-arriving stream if stopCamera was called, mode changed, or component unmounted during permission prompt
-      if (!cameraRequestedRef.current || !isMountedRef.current || scanMode !== 'camera') {
+      // Stop late-arriving stream if stopCamera was called, mode changed, unmounted, or revalidating
+      if (!cameraRequestedRef.current || !isMountedRef.current || scanMode !== 'camera' || isSessionRevalidatingRef.current) {
         stream.getTracks().forEach((track) => track.stop());
         return;
       }
@@ -276,6 +299,16 @@ export const AttendanceQRScanner: React.FC<AttendanceQRScannerProps> = ({
     const file = e.target.files?.[0];
     if (!file) return;
 
+    if (isSessionRevalidatingRef.current) {
+      setLastScanResult({
+        success: false,
+        code: 'REVALIDATING',
+        message: 'Verifying session permissions. Image scan paused — try again once confirmed.',
+      });
+      e.target.value = '';
+      return;
+    }
+
     if (!selectedGroupId) {
       setLastScanResult({
         success: false,
@@ -288,8 +321,24 @@ export const AttendanceQRScanner: React.FC<AttendanceQRScannerProps> = ({
 
     const reader = new FileReader();
     reader.onload = () => {
+      if (isSessionRevalidatingRef.current) {
+        setLastScanResult({
+          success: false,
+          code: 'REVALIDATING',
+          message: 'Verifying session permissions. Image decode ignored — upload again once confirmed.',
+        });
+        return;
+      }
       const img = new Image();
       img.onload = () => {
+        if (isSessionRevalidatingRef.current) {
+          setLastScanResult({
+            success: false,
+            code: 'REVALIDATING',
+            message: 'Verifying session permissions. Image scan ignored — upload again once confirmed.',
+          });
+          return;
+        }
         const canvas = document.createElement('canvas');
         canvas.width = img.width;
         canvas.height = img.height;
@@ -323,6 +372,14 @@ export const AttendanceQRScanner: React.FC<AttendanceQRScannerProps> = ({
   // Manual token submit (for quick dev/test verification)
   const handleManualSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSessionRevalidatingRef.current) {
+      setLastScanResult({
+        success: false,
+        code: 'REVALIDATING',
+        message: 'Verifying session permissions. Manual scan paused — submit again once confirmed.',
+      });
+      return;
+    }
     if (!selectedGroupId) {
       setLastScanResult({
         success: false,
@@ -338,6 +395,18 @@ export const AttendanceQRScanner: React.FC<AttendanceQRScannerProps> = ({
 
   return (
     <div className="space-y-6">
+      {isSessionRevalidating && (
+        <div
+          data-testid="qr-revalidating-banner"
+          role="status"
+          className="p-3.5 rounded-2xl bg-amber-50 border border-amber-200 text-amber-900 text-xs flex items-center gap-2"
+        >
+          <RefreshCw className="w-4 h-4 text-amber-600 animate-spin shrink-0" />
+          <span className="font-semibold">
+            Re-verifying session permissions... QR attendance recording is paused until confirmed.
+          </span>
+        </div>
+      )}
       {/* Top Controls Card: Group Selection & Scan Mode */}
       <div className="bg-white rounded-3xl p-6 border border-[#E6E8E2] shadow-xs space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
@@ -489,7 +558,7 @@ export const AttendanceQRScanner: React.FC<AttendanceQRScannerProps> = ({
                 {!isCameraActive ? (
                   <button
                     onClick={startCamera}
-                    disabled={!selectedGroupId}
+                    disabled={!selectedGroupId || isSessionRevalidating}
                     className="flex items-center gap-2 px-6 py-2.5 rounded-xl bg-[#174E50] text-white text-xs font-bold hover:bg-[#134042] disabled:opacity-50 disabled:cursor-not-allowed transition shadow-xs"
                   >
                     <Camera className="w-4 h-4" />
@@ -522,13 +591,18 @@ export const AttendanceQRScanner: React.FC<AttendanceQRScannerProps> = ({
                   </p>
                 </div>
 
-                <label className="inline-flex items-center gap-2 px-6 py-3 rounded-2xl bg-[#174E50] text-white text-xs font-bold hover:bg-[#134042] cursor-pointer transition shadow-xs">
+                <label
+                  className={`inline-flex items-center gap-2 px-6 py-3 rounded-2xl bg-[#174E50] text-white text-xs font-bold hover:bg-[#134042] transition shadow-xs ${
+                    !selectedGroupId || isSessionRevalidating ? 'opacity-50 cursor-not-allowed pointer-events-none' : 'cursor-pointer'
+                  }`}
+                >
                   <Upload className="w-4 h-4" />
                   <span>Choose Image File</span>
                   <input
                     type="file"
                     accept="image/*"
                     onChange={handleImageUpload}
+                    disabled={!selectedGroupId || isSessionRevalidating}
                     className="hidden"
                   />
                 </label>
@@ -558,7 +632,7 @@ export const AttendanceQRScanner: React.FC<AttendanceQRScannerProps> = ({
                 />
                 <button
                   type="submit"
-                  disabled={!manualToken.trim() || isProcessing}
+                  disabled={!manualToken.trim() || isProcessing || isSessionRevalidating}
                   className="flex items-center gap-1.5 px-5 py-2.5 rounded-xl bg-[#174E50] text-white text-xs font-bold hover:bg-[#134042] disabled:opacity-50 transition"
                 >
                   <ArrowRight className="w-4 h-4" />

@@ -7,6 +7,7 @@ export const AccessDenied: React.FC = () => {
 
   const isMissingProfile = status === 'missing_profile';
   const isProfileError = status === 'profile_error';
+  const isUnknownRole = status === 'unknown_role';
 
   return (
     <div className="min-h-screen bg-[#0B1024] text-white flex items-center justify-center p-6 relative overflow-hidden font-sans">
@@ -28,21 +29,35 @@ export const AccessDenied: React.FC = () => {
             ? 'Profile Verification Error'
             : isMissingProfile
             ? 'Profile Record Missing'
-            : 'Admin Privileges Required'}
+            : isUnknownRole
+            ? 'Unrecognized Account Role'
+            : 'Access Restricted'}
         </h2>
 
         <p className="text-xs text-[#C7B8ED] leading-relaxed mb-6">
           {isProfileError ? (
             <>
-              {error || 'Unable to verify your account permissions due to a network or database failure. Protected admin screens have been locked. Please retry or sign out.'}
+              {error || 'Unable to verify your account permissions due to a network or database failure. Protected screens have been locked. Please retry or sign out.'}
             </>
           ) : isMissingProfile ? (
             <>
               Your account (<span className="text-white font-mono">{user?.email}</span>) is authenticated, but no matching record exists in <code className="bg-[#20294A] px-1.5 py-0.5 rounded text-[#70C9DC]">public.profiles</code>. Please ask an administrator to assign your profile record.
             </>
+          ) : isUnknownRole ? (
+            <>
+              {error || (
+                <>
+                  Your account (<span className="text-white font-semibold">{profile?.full_name || user?.email}</span>) has an unrecognized role <span className="uppercase font-bold text-[#E5C47A] bg-[#20294A] px-2 py-0.5 rounded text-[11px]">{role || 'unknown'}</span>. Please ask an administrator to assign a supported role.
+                </>
+              )}
+            </>
           ) : (
             <>
-              You are signed in as <span className="text-white font-semibold">{profile?.full_name || user?.email}</span> with role <span className="uppercase font-bold text-[#E5C47A] bg-[#20294A] px-2 py-0.5 rounded text-[11px]">{role}</span>. This portal is restricted exclusively to administrators.
+              {error || (
+                <>
+                  You are signed in as <span className="text-white font-semibold">{profile?.full_name || user?.email}</span>, but access could not be granted for role <span className="uppercase font-bold text-[#E5C47A] bg-[#20294A] px-2 py-0.5 rounded text-[11px]">{role || 'none'}</span>.
+                </>
+              )}
             </>
           )}
         </p>
