@@ -1,5 +1,6 @@
 /** @type {import('tailwindcss').Config} */
 export default {
+  darkMode: 'class',
   content: [
     "./index.html",
     "./src/**/*.{js,ts,jsx,tsx}",
@@ -33,7 +34,8 @@ export default {
         }
       },
       fontFamily: {
-        sans: ['Inter', 'system-ui', '-apple-system', 'sans-serif'],
+        sans: ['Plus Jakarta Sans', 'Cairo', 'system-ui', '-apple-system', 'sans-serif'],
+        arabic: ['Cairo', 'Plus Jakarta Sans', 'system-ui', '-apple-system', 'sans-serif'],
       }
     },
   },

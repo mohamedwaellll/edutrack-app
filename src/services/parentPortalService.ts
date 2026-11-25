@@ -6,16 +6,18 @@ import type {
   StudentGradeItem,
 } from './studentPortalService';
 import {
+  type ParentChildAssignmentItem,
   type ParentTeacherNoteItem,
   parseRpcPayload,
   validateAttendanceList,
   validateGradesList,
+  validateParentChildAssignments,
   validateParentNotesList,
   validateStudentCardSummary,
 } from './portalPayloadValidation';
 
 export type ParentChildSummary = StudentCardSummary;
-export type { ParentTeacherNoteItem };
+export type { ParentChildAssignmentItem, ParentTeacherNoteItem };
 
 export interface ParentChildDetails {
   child: ParentChildSummary;
@@ -25,6 +27,10 @@ export interface ParentChildDetails {
 }
 
 export interface ParentChildDetailsResult extends ServiceResult<ParentChildDetails> {
+  linkRevoked?: boolean;
+}
+
+export interface ParentChildAssignmentsResult extends ServiceResult<ParentChildAssignmentItem[]> {
   linkRevoked?: boolean;
 }
 
@@ -67,10 +73,13 @@ export const parentPortalService = {
       }
 
       return { data: children, error: null };
-    } catch (err: any) {
+    } catch (err: unknown) {
       return {
         data: null,
-        error: err?.message || 'Unable to contact database while loading linked children.',
+        error:
+          err instanceof Error && err.message
+            ? err.message
+            : 'Unable to contact database while loading linked children.',
       };
     }
   },
@@ -133,10 +142,62 @@ export const parentPortalService = {
         },
         error: null,
       };
-    } catch (err: any) {
+    } catch (err: unknown) {
       return {
         data: null,
-        error: err?.message || 'Unable to contact database while loading child details.',
+        error:
+          err instanceof Error && err.message
+            ? err.message
+            : 'Unable to contact database while loading child details.',
+      };
+    }
+  },
+
+  async getParentChildAssignments(studentId: string): Promise<ParentChildAssignmentsResult> {
+    if (!isSupabaseConfigured()) {
+      return { data: null, error: 'Supabase is not configured.' };
+    }
+
+    const trimmedId = studentId.trim();
+    if (!UUID_REGEX.test(trimmedId)) {
+      return { data: null, error: 'Invalid child identifier selected.' };
+    }
+
+    try {
+      const { data, error } = await supabase.rpc('get_parent_child_assignments', {
+        p_student_id: trimmedId,
+      });
+
+      if (error) {
+        const message = error.message || 'Failed to load child assignments.';
+        return {
+          data: null,
+          error: message,
+          linkRevoked: isLinkRevokedError(message),
+        };
+      }
+
+      const payload = parseRpcPayload(data);
+      if (!payload) {
+        return { data: null, error: 'Unexpected child assignments response from database.' };
+      }
+
+      const validated = validateParentChildAssignments(payload.assignments);
+      if (validated.error || !validated.data) {
+        return {
+          data: null,
+          error: validated.error || 'Invalid child assignments list in database response.',
+        };
+      }
+
+      return { data: validated.data, error: null };
+    } catch (err: unknown) {
+      return {
+        data: null,
+        error:
+          err instanceof Error && err.message
+            ? err.message
+            : 'Unable to contact database while loading child assignments.',
       };
     }
   },

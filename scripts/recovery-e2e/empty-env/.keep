@@ -1,0 +1,1 @@
+# Intentionally empty directory so isolated recovery E2E Vite runs never load root .env

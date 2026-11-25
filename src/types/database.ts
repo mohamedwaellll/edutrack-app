@@ -76,6 +76,16 @@ export interface CreateGroupInput {
   schedule?: string | null;
 }
 
+export interface UpdateGroupInput {
+  id: string;
+  name: string;
+  grade_level: string;
+  subject?: string | null;
+  room?: string | null;
+  capacity: number;
+  schedule?: string | null;
+}
+
 export interface CreateTeacherInput {
   full_name: string;
   subject: string;

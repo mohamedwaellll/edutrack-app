@@ -1,5 +1,5 @@
-import React from "react";
 import { QRCodeSVG } from "qrcode.react";
+import { usePreferences } from "../contexts/preferencesState";
 
 export type StudentCardData = {
   id: string;
@@ -21,6 +21,8 @@ export default function StudentIdCard({
   student,
   centerName = "EduTrack Center",
 }: Props) {
+  const { language } = usePreferences();
+
   return (
     <div
       dir="ltr"
@@ -31,7 +33,7 @@ export default function StudentIdCard({
       }}
     >
       {/* Side strip */}
-      <div className="flex w-[8mm] items-center justify-center bg-indigo-600">
+      <div className="flex w-[8mm] items-center justify-center bg-[#174E50]">
         <span
           className="whitespace-nowrap text-[7pt] font-bold tracking-wide text-white"
           style={{ writingMode: "vertical-rl", transform: "rotate(180deg)" }}
@@ -43,11 +45,11 @@ export default function StudentIdCard({
       {/* Content */}
       <div className="flex flex-1 flex-col justify-between p-[3mm]">
         <div className="flex items-center justify-between">
-          <h3 className="text-[9pt] font-extrabold text-indigo-700">
+          <h3 className="text-[9pt] font-extrabold text-[#174E50]">
             {centerName}
           </h3>
-          <span className="rounded bg-indigo-50 px-[2mm] py-[0.5mm] text-[6pt] font-semibold uppercase text-indigo-700">
-            Student Card
+          <span className="rounded bg-[#D8E8DC] px-[2mm] py-[0.5mm] text-[6pt] font-semibold uppercase text-[#174E50]">
+            {language === "ar" ? "كارت طالب" : "Student Card"}
           </span>
         </div>
 
@@ -73,23 +75,25 @@ export default function StudentIdCard({
               {student.full_name}
             </p>
             <p dir="auto" className="text-[7pt] text-slate-600">
-              Code: <span className="font-mono font-bold text-slate-800">{student.student_code}</span>
+              {language === "ar" ? "الكود:" : "Code:"}{" "}
+              <span className="font-mono font-bold text-slate-800">{student.student_code}</span>
             </p>
             {student.grade_level && (
               <p dir="auto" className="text-[7pt] text-slate-600">
-                Grade: {student.grade_level}
+                {language === "ar" ? "الصف:" : "Grade:"} {student.grade_level}
               </p>
             )}
             {student.group_name && (
               <p dir="auto" className="text-[7pt] text-slate-600">
-                Group: {student.group_name}
+                {language === "ar" ? "المجموعة:" : "Group:"} {student.group_name}
               </p>
             )}
           </div>
         </div>
 
         <p className="text-center text-[5.5pt] text-slate-400">
-          ID: {student.student_code || student.id.slice(0, 8).toUpperCase()} • Show this card at the entrance
+          ID: {student.student_code || student.id.slice(0, 8).toUpperCase()} •{" "}
+          {language === "ar" ? "امسح الكارت عند دخول القاعة" : "Show this card at the entrance"}
         </p>
       </div>
     </div>

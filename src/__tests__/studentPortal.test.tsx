@@ -2,6 +2,7 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
+import type { AuthChangeEvent, Session, Subscription } from '@supabase/supabase-js';
 import App from '../App';
 import { supabase } from '../lib/supabaseClient';
 import * as supabaseClientModule from '../lib/supabaseClient';
@@ -15,18 +16,23 @@ global.ResizeObserver = class ResizeObserver {
   disconnect() {}
 };
 
+type RpcReturn = ReturnType<typeof supabase.rpc>;
+type RpcResolved = Awaited<RpcReturn>;
+const rpcResolve = (data: unknown, error: { message: string } | null = null): RpcReturn =>
+  Promise.resolve({ data, error }) as unknown as RpcReturn;
+
 function setupStudentAuth(userId: string, fullName: string) {
   vi.spyOn(supabase.auth, 'getSession').mockResolvedValue({
     data: {
       session: {
         user: { id: userId, email: `${userId}@edutrack.com` },
         access_token: `tok-${userId}`,
-      } as any,
+      } as unknown as Session,
     },
     error: null,
   });
 
-  vi.spyOn(supabase, 'from').mockImplementation((table: string): any => {
+  vi.spyOn(supabase, 'from').mockImplementation(((table: string) => {
     if (table === 'profiles') {
       return {
         select: () => ({
@@ -48,20 +54,20 @@ function setupStudentAuth(userId: string, fullName: string) {
         }),
       }),
     };
-  });
+  }) as unknown as typeof supabase.from);
 }
 
 describe('Student Portal Stage D (App Entry Point, Isolation & Error vs Empty States)', () => {
-  let authStateCallback: ((event: string, session: any) => void) | null = null;
+  let authStateCallback: ((event: AuthChangeEvent, session: Session | null) => void) | null = null;
 
   beforeEach(() => {
     vi.restoreAllMocks();
     authStateCallback = null;
     vi.spyOn(supabaseClientModule, 'isSupabaseConfigured').mockReturnValue(true);
-    vi.spyOn(supabase.auth, 'signOut').mockResolvedValue({ error: null } as any);
-    vi.spyOn(supabase.auth, 'onAuthStateChange').mockImplementation((cb: any) => {
+    vi.spyOn(supabase.auth, 'signOut').mockResolvedValue({ error: null });
+    vi.spyOn(supabase.auth, 'onAuthStateChange').mockImplementation((cb) => {
       authStateCallback = cb;
-      return { data: { subscription: { unsubscribe: vi.fn() } } } as any;
+      return { data: { subscription: { unsubscribe: vi.fn() } as unknown as Subscription } };
     });
   });
 
@@ -77,41 +83,38 @@ describe('Student Portal Stage D (App Entry Point, Isolation & Error vs Empty St
     const getProfilesSpy = vi.spyOn(accountLinkingService, 'getProfilesByRole');
     const getGradesSpy = vi.spyOn(teacherService, 'getGrades');
 
-    const rpcSpy = vi.spyOn(supabase, 'rpc').mockImplementation((fnName: string): any => {
+    const rpcSpy = vi.spyOn(supabase, 'rpc').mockImplementation((fnName: string) => {
       if (fnName === 'get_student_portal_data') {
-        return Promise.resolve({
-          data: {
-            linked: true,
-            student: {
-              id: 'stu-rec-1',
-              full_name: 'Mohamed Ali',
-              student_code: 'ET-D-101',
-              grade_level: 'Grade 9',
-              status: 'active',
-              group: { id: 'grp-d-1', name: 'Group D-Alpha', grade_level: 'Grade 9' },
-              // Extra fields in mock payload should still never leak in UI
-              qr_code_hash: 'HIDDEN-QR-HASH',
-              parent_phone: '+201009998811',
-            },
-            attendance: [
-              { id: 'att-new', date: '2026-11-21', status: 'Present', check_in_time: '08:05' },
-              { id: 'att-old', date: '2026-11-19', status: 'Absent', check_in_time: null },
-            ],
-            grades: [
-              {
-                id: 'grd-18',
-                assessment_title: 'Algebra Midterm',
-                grade_type: 'exam',
-                score: 18,
-                max_score: 20,
-                assessment_date: '2026-11-21',
-              },
-            ],
+        return rpcResolve({
+          linked: true,
+          student: {
+            id: 'stu-rec-1',
+            full_name: 'Mohamed Ali',
+            student_code: 'ET-D-101',
+            grade_level: 'Grade 9',
+            status: 'active',
+            group: { id: 'grp-d-1', name: 'Group D-Alpha', grade_level: 'Grade 9' },
+            // Extra fields in mock payload should still never leak in UI
+            qr_code_hash: 'HIDDEN-QR-HASH',
+            parent_phone: '+201009998811',
           },
-          error: null,
+          attendance: [
+            { id: 'att-new', date: '2026-11-21', status: 'Present', check_in_time: '08:05' },
+            { id: 'att-old', date: '2026-11-19', status: 'Absent', check_in_time: null },
+          ],
+          grades: [
+            {
+              id: 'grd-18',
+              assessment_title: 'Algebra Midterm',
+              grade_type: 'exam',
+              score: 18,
+              max_score: 20,
+              assessment_date: '2026-11-21',
+            },
+          ],
         });
       }
-      return Promise.resolve({ data: null, error: null });
+      return rpcResolve(null);
     });
 
     const { unmount } = render(<App />);
@@ -151,33 +154,27 @@ describe('Student Portal Stage D (App Entry Point, Isolation & Error vs Empty St
 
     let phase: 'error' | 'empty_no_group' | 'unlinked' = 'error';
 
-    vi.spyOn(supabase, 'rpc').mockImplementation((fnName: string): any => {
-      if (fnName !== 'get_student_portal_data') return Promise.resolve({ data: null, error: null });
+    vi.spyOn(supabase, 'rpc').mockImplementation((fnName: string) => {
+      if (fnName !== 'get_student_portal_data') return rpcResolve(null);
       if (phase === 'error') {
-        return Promise.resolve({ data: null, error: { message: 'Database read timeout' } });
+        return rpcResolve(null, { message: 'Database read timeout' });
       }
       if (phase === 'empty_no_group') {
-        return Promise.resolve({
-          data: {
-            linked: true,
-            student: {
-              id: 'stu-rec-2',
-              full_name: 'Sara Student',
-              student_code: 'ET-D-202',
-              grade_level: 'Grade 10',
-              status: 'active',
-              group: null,
-            },
-            attendance: [],
-            grades: [],
+        return rpcResolve({
+          linked: true,
+          student: {
+            id: 'stu-rec-2',
+            full_name: 'Sara Student',
+            student_code: 'ET-D-202',
+            grade_level: 'Grade 10',
+            status: 'active',
+            group: null,
           },
-          error: null,
+          attendance: [],
+          grades: [],
         });
       }
-      return Promise.resolve({
-        data: { linked: false, student: null, attendance: [], grades: [] },
-        error: null,
-      });
+      return rpcResolve({ linked: false, student: null, attendance: [], grades: [] });
     });
 
     render(<App />);
@@ -209,34 +206,31 @@ describe('Student Portal Stage D (App Entry Point, Isolation & Error vs Empty St
   });
 
   it('3. Wipes student data immediately on account switch/sign-out and ignores delayed RPC from previous student', async () => {
-    let resolveSlowStudent1: (val: any) => void;
+    let resolveSlowStudent1: (val: RpcResolved) => void;
     let rpcCallCount = 0;
 
     setupStudentAuth('stu-switch-1', 'Student One');
 
-    vi.spyOn(supabase, 'rpc').mockImplementation((fnName: string): any => {
-      if (fnName !== 'get_student_portal_data') return Promise.resolve({ data: null, error: null });
+    vi.spyOn(supabase, 'rpc').mockImplementation((fnName: string) => {
+      if (fnName !== 'get_student_portal_data') return rpcResolve(null);
       rpcCallCount++;
       if (rpcCallCount === 1) {
-        return new Promise((resolve) => {
+        return new Promise<RpcResolved>((resolve) => {
           resolveSlowStudent1 = resolve;
-        });
+        }) as unknown as RpcReturn;
       }
-      return Promise.resolve({
-        data: {
-          linked: true,
-          student: {
-            id: 'stu-rec-s2',
-            full_name: 'Student Two',
-            student_code: 'ET-S2',
-            grade_level: 'Grade 11',
-            status: 'active',
-            group: { id: 'g-2', name: 'Group S2', grade_level: 'Grade 11' },
-          },
-          attendance: [{ id: 'a-s2', date: '2026-11-21', status: 'Late', check_in_time: '08:25' }],
-          grades: [],
+      return rpcResolve({
+        linked: true,
+        student: {
+          id: 'stu-rec-s2',
+          full_name: 'Student Two',
+          student_code: 'ET-S2',
+          grade_level: 'Grade 11',
+          status: 'active',
+          group: { id: 'g-2', name: 'Group S2', grade_level: 'Grade 11' },
         },
-        error: null,
+        attendance: [{ id: 'a-s2', date: '2026-11-21', status: 'Late', check_in_time: '08:25' }],
+        grades: [],
       });
     });
 
@@ -251,7 +245,7 @@ describe('Student Portal Stage D (App Entry Point, Isolation & Error vs Empty St
       authStateCallback?.('SIGNED_IN', {
         user: { id: 'stu-switch-2', email: 'stu-switch-2@edutrack.com' },
         access_token: 'tok-s2',
-      });
+      } as unknown as Session);
     });
 
     await waitFor(() => {
@@ -276,7 +270,7 @@ describe('Student Portal Stage D (App Entry Point, Isolation & Error vs Empty St
           grades: [{ id: 'stale-g', assessment_title: 'Stale Score', grade_type: 'exam', score: 9, max_score: 10, assessment_date: '2026-11-20' }],
         },
         error: null,
-      });
+      } as unknown as RpcResolved);
     });
 
     expect(screen.getByTestId('student-card-code').textContent).toBe('ET-S2');
@@ -359,11 +353,11 @@ describe('Student Portal Stage D (App Entry Point, Isolation & Error vs Empty St
       },
     ];
 
-    vi.spyOn(supabase, 'rpc').mockImplementation((fnName: string): any => {
-      if (fnName !== 'get_student_portal_data') return Promise.resolve({ data: null, error: null });
+    vi.spyOn(supabase, 'rpc').mockImplementation((fnName: string) => {
+      if (fnName !== 'get_student_portal_data') return rpcResolve(null);
       const data = payloads[Math.min(attempt, payloads.length - 1)];
       attempt++;
-      return Promise.resolve({ data, error: null });
+      return rpcResolve(data);
     });
 
     render(<App />);
@@ -495,11 +489,11 @@ describe('Student Portal Stage D (App Entry Point, Isolation & Error vs Empty St
       },
     ];
 
-    vi.spyOn(supabase, 'rpc').mockImplementation((fnName: string): any => {
-      if (fnName !== 'get_student_portal_data') return Promise.resolve({ data: null, error: null });
+    vi.spyOn(supabase, 'rpc').mockImplementation((fnName: string) => {
+      if (fnName !== 'get_student_portal_data') return rpcResolve(null);
       const data = responses[Math.min(phase, responses.length - 1)];
       phase++;
-      return Promise.resolve({ data, error: null });
+      return rpcResolve(data);
     });
 
     render(<App />);

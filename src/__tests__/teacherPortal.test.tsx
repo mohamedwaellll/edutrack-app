@@ -2,6 +2,7 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
+import type { AuthChangeEvent, AuthError, Session, Subscription } from '@supabase/supabase-js';
 import App from '../App';
 import { supabase } from '../lib/supabaseClient';
 import * as supabaseClientModule from '../lib/supabaseClient';
@@ -21,18 +22,23 @@ global.ResizeObserver = class ResizeObserver {
   disconnect() {}
 };
 
+type RpcReturn = ReturnType<typeof supabase.rpc>;
+type RpcResolved = Awaited<RpcReturn>;
+const rpcResolve = (data: unknown, error: { message: string } | null = null): RpcReturn =>
+  Promise.resolve({ data, error }) as unknown as RpcReturn;
+
 function setupTeacherAuthSession(userId: string, fullName: string, role: 'teacher' | 'admin' | 'student' = 'teacher') {
   vi.spyOn(supabase.auth, 'getSession').mockResolvedValue({
     data: {
       session: {
         user: { id: userId, email: `${role}@edutrack.com` },
         access_token: `tok-${userId}`,
-      } as any,
+      } as unknown as Session,
     },
     error: null,
   });
 
-  vi.spyOn(supabase, 'from').mockImplementation((table: string): any => {
+  vi.spyOn(supabase, 'from').mockImplementation(((table: string) => {
     if (table === 'profiles') {
       return {
         select: () => ({
@@ -54,7 +60,7 @@ function setupTeacherAuthSession(userId: string, fullName: string, role: 'teache
         }),
       }),
     };
-  });
+  }) as unknown as typeof supabase.from);
 }
 
 const GRP_1 = 'aaaaaaaa-aaaa-4aaa-8aaa-000000000001';
@@ -67,16 +73,16 @@ const GRP_ONE = 'aaaaaaaa-aaaa-4aaa-8aaa-000000000007';
 const GRP_TWO = 'aaaaaaaa-aaaa-4aaa-8aaa-000000000008';
 
 describe('Teacher Portal Stage C.1 (App Entry Point, Read-Only Scope & Stale Response Protection)', () => {
-  let authStateCallback: ((event: string, session: any) => void) | null = null;
+  let authStateCallback: ((event: AuthChangeEvent, session: Session | null) => void) | null = null;
 
   beforeEach(() => {
     vi.restoreAllMocks();
     authStateCallback = null;
     vi.spyOn(supabaseClientModule, 'isSupabaseConfigured').mockReturnValue(true);
-    vi.spyOn(supabase.auth, 'signOut').mockResolvedValue({ error: null } as any);
-    vi.spyOn(supabase.auth, 'onAuthStateChange').mockImplementation((cb: any) => {
+    vi.spyOn(supabase.auth, 'signOut').mockResolvedValue({ error: null });
+    vi.spyOn(supabase.auth, 'onAuthStateChange').mockImplementation((cb) => {
       authStateCallback = cb;
-      return { data: { subscription: { unsubscribe: vi.fn() } } } as any;
+      return { data: { subscription: { unsubscribe: vi.fn() } as unknown as Subscription } };
     });
   });
 
@@ -92,18 +98,16 @@ describe('Teacher Portal Stage C.1 (App Entry Point, Read-Only Scope & Stale Res
     const addFeedbackSpy = vi.spyOn(teacherService, 'addFeedback');
     const getProfilesSpy = vi.spyOn(accountLinkingService, 'getProfilesByRole');
 
-    const rpcSpy = vi.spyOn(supabase, 'rpc').mockImplementation((fnName: string, params?: any): any => {
+    const rpcSpy = vi.spyOn(supabase, 'rpc').mockImplementation((fnName: string, args?: unknown) => {
+      const params = args as { p_group_id?: string } | undefined;
       if (fnName === 'get_teacher_portal_context') {
-        return Promise.resolve({
-          data: {
-            linked: true,
-            teacher: { id: 't-rec-1', full_name: 'Tariq Teacher', subject: 'Physics' },
-            groups: [
-              { id: GRP_1, name: 'Grade 10A', grade_level: 'Grade 10', student_count: 2 },
-              { id: GRP_EMPTY, name: 'Grade 11 Lab', grade_level: 'Grade 11', student_count: 0 },
-            ],
-          },
-          error: null,
+        return rpcResolve({
+          linked: true,
+          teacher: { id: 't-rec-1', full_name: 'Tariq Teacher', subject: 'Physics' },
+          groups: [
+            { id: GRP_1, name: 'Grade 10A', grade_level: 'Grade 10', student_count: 2 },
+            { id: GRP_EMPTY, name: 'Grade 11 Lab', grade_level: 'Grade 11', student_count: 0 },
+          ],
         });
       }
       if (fnName === 'get_teacher_group_students' && params?.p_group_id === GRP_1) {
@@ -188,47 +192,38 @@ describe('Teacher Portal Stage C.1 (App Entry Point, Read-Only Scope & Stale Res
 
     let phase: 'error' | 'unlinked' | 'no_groups' | 'has_group' | 'group_error' | 'group_recovered' = 'error';
 
-    vi.spyOn(supabase, 'rpc').mockImplementation((fnName: string): any => {
+    vi.spyOn(supabase, 'rpc').mockImplementation((fnName: string) => {
       if (fnName === 'get_teacher_portal_context') {
         if (phase === 'error') {
-          return Promise.resolve({ data: null, error: { message: 'Context RPC failed' } });
+          return rpcResolve(null, { message: 'Context RPC failed' });
         }
         if (phase === 'unlinked') {
-          return Promise.resolve({ data: { linked: false, teacher: null, groups: [] }, error: null });
+          return rpcResolve({ linked: false, teacher: null, groups: [] });
         }
         if (phase === 'no_groups') {
-          return Promise.resolve({
-            data: {
-              linked: true,
-              teacher: { id: 't-2', full_name: 'Nadia Teacher', subject: 'Math' },
-              groups: [],
-            },
-            error: null,
-          });
-        }
-        return Promise.resolve({
-          data: {
+          return rpcResolve({
             linked: true,
             teacher: { id: 't-2', full_name: 'Nadia Teacher', subject: 'Math' },
-            groups: [{ id: GRP_M1, name: 'Grade 9B', grade_level: 'Grade 9', student_count: 1 }],
-          },
-          error: null,
+            groups: [],
+          });
+        }
+        return rpcResolve({
+          linked: true,
+          teacher: { id: 't-2', full_name: 'Nadia Teacher', subject: 'Math' },
+          groups: [{ id: GRP_M1, name: 'Grade 9B', grade_level: 'Grade 9', student_count: 1 }],
         });
       }
 
       if (fnName === 'get_teacher_group_students') {
         if (phase === 'group_error') {
-          return Promise.resolve({ data: null, error: { message: 'Access denied: Group unassigned' } });
+          return rpcResolve(null, { message: 'Access denied: Group unassigned' });
         }
-        return Promise.resolve({
-          data: {
-            group: { id: GRP_M1, name: 'Grade 9B', grade_level: 'Grade 9' },
-            students: [{ id: 'stu-m1', full_name: 'Ziad Samir', student_code: 'ET-209', status: 'active', group_id: GRP_M1 }],
-          },
-          error: null,
+        return rpcResolve({
+          group: { id: GRP_M1, name: 'Grade 9B', grade_level: 'Grade 9' },
+          students: [{ id: 'stu-m1', full_name: 'Ziad Samir', student_code: 'ET-209', status: 'active', group_id: GRP_M1 }],
         });
       }
-      return Promise.resolve({ data: null, error: null });
+      return rpcResolve(null);
     });
 
     render(<App />);
@@ -270,71 +265,60 @@ describe('Teacher Portal Stage C.1 (App Entry Point, Read-Only Scope & Stale Res
   });
 
   it('3. Ignores delayed roster response after switching groups and delayed portal response after account switch or sign-out', async () => {
-    let resolveSlowGroupA: (val: any) => void;
-    let resolveSlowTeacher1Ctx: (val: any) => void;
+    let resolveSlowGroupA: (val: RpcResolved) => void;
+    let resolveSlowTeacher1Ctx: (val: RpcResolved) => void;
     let ctxCalls = 0;
 
     setupTeacherAuthSession('teacher-race-1', 'Teacher Race 1');
 
-    vi.spyOn(supabase, 'rpc').mockImplementation((fnName: string, params?: any): any => {
+    vi.spyOn(supabase, 'rpc').mockImplementation((fnName: string, args?: unknown) => {
+      const params = args as { p_group_id?: string } | undefined;
       if (fnName === 'get_teacher_portal_context') {
         ctxCalls++;
         if (ctxCalls === 1) {
-          return Promise.resolve({
-            data: {
-              linked: true,
-              teacher: { id: 'tr-1', full_name: 'Teacher Race 1', subject: 'Bio' },
-              groups: [
-                { id: GRP_SLOW, name: 'Slow Group A', grade_level: 'Grade 8', student_count: 1 },
-                { id: GRP_FAST, name: 'Fast Group B', grade_level: 'Grade 9', student_count: 1 },
-              ],
-            },
-            error: null,
+          return rpcResolve({
+            linked: true,
+            teacher: { id: 'tr-1', full_name: 'Teacher Race 1', subject: 'Bio' },
+            groups: [
+              { id: GRP_SLOW, name: 'Slow Group A', grade_level: 'Grade 8', student_count: 1 },
+              { id: GRP_FAST, name: 'Fast Group B', grade_level: 'Grade 9', student_count: 1 },
+            ],
           });
         }
         if (ctxCalls === 2) {
           // Slow context reload for Teacher 1 before account switch
-          return new Promise((resolve) => {
+          return new Promise<RpcResolved>((resolve) => {
             resolveSlowTeacher1Ctx = resolve;
-          });
+          }) as unknown as RpcReturn;
         }
         // Teacher 2 portal context
-        return Promise.resolve({
-          data: {
-            linked: true,
-            teacher: { id: 'tr-2', full_name: 'Teacher Race 2', subject: 'Chem' },
-            groups: [{ id: GRP_T2, name: 'Teacher 2 Only Group', grade_level: 'Grade 12', student_count: 1 }],
-          },
-          error: null,
+        return rpcResolve({
+          linked: true,
+          teacher: { id: 'tr-2', full_name: 'Teacher Race 2', subject: 'Chem' },
+          groups: [{ id: GRP_T2, name: 'Teacher 2 Only Group', grade_level: 'Grade 12', student_count: 1 }],
         });
       }
 
       if (fnName === 'get_teacher_group_students') {
         if (params?.p_group_id === GRP_SLOW) {
-          return new Promise((resolve) => {
+          return new Promise<RpcResolved>((resolve) => {
             resolveSlowGroupA = resolve;
-          });
+          }) as unknown as RpcReturn;
         }
         if (params?.p_group_id === GRP_FAST) {
-          return Promise.resolve({
-            data: {
-              group: { id: GRP_FAST, name: 'Fast Group B', grade_level: 'Grade 9' },
-              students: [{ id: 'stu-fast', full_name: 'Fast Group Student', student_code: 'F-01', status: 'active', group_id: GRP_FAST }],
-            },
-            error: null,
+          return rpcResolve({
+            group: { id: GRP_FAST, name: 'Fast Group B', grade_level: 'Grade 9' },
+            students: [{ id: 'stu-fast', full_name: 'Fast Group Student', student_code: 'F-01', status: 'active', group_id: GRP_FAST }],
           });
         }
         if (params?.p_group_id === GRP_T2) {
-          return Promise.resolve({
-            data: {
-              group: { id: GRP_T2, name: 'Teacher 2 Only Group', grade_level: 'Grade 12' },
-              students: [{ id: 'stu-t2', full_name: 'Teacher Two Student', student_code: 'T2-01', status: 'active', group_id: GRP_T2 }],
-            },
-            error: null,
+          return rpcResolve({
+            group: { id: GRP_T2, name: 'Teacher 2 Only Group', grade_level: 'Grade 12' },
+            students: [{ id: 'stu-t2', full_name: 'Teacher Two Student', student_code: 'T2-01', status: 'active', group_id: GRP_T2 }],
           });
         }
       }
-      return Promise.resolve({ data: null, error: null });
+      return rpcResolve(null);
     });
 
     render(<App />);
@@ -359,7 +343,7 @@ describe('Teacher Portal Stage C.1 (App Entry Point, Read-Only Scope & Stale Res
           students: [{ id: 'stu-slow', full_name: 'Stale Group A Student', student_code: 'S-99', status: 'active', group_id: GRP_SLOW }],
         },
         error: null,
-      });
+      } as unknown as RpcResolved);
     });
 
     expect(screen.getByText('Fast Group Student')).toBeDefined();
@@ -375,7 +359,7 @@ describe('Teacher Portal Stage C.1 (App Entry Point, Read-Only Scope & Stale Res
       authStateCallback?.('SIGNED_IN', {
         user: { id: 'teacher-race-2', email: 'teacher2@edutrack.com' },
         access_token: 'tok-race-2',
-      });
+      } as unknown as Session);
     });
 
     await waitFor(() => {
@@ -392,7 +376,7 @@ describe('Teacher Portal Stage C.1 (App Entry Point, Read-Only Scope & Stale Res
           groups: [{ id: GRP_SLOW, name: 'Slow Group A', grade_level: 'Grade 8', student_count: 1 }],
         },
         error: null,
-      });
+      } as unknown as RpcResolved);
     });
 
     expect(screen.getByTestId('selected-group-title').textContent).toBe('Teacher 2 Only Group');
@@ -401,16 +385,16 @@ describe('Teacher Portal Stage C.1 (App Entry Point, Read-Only Scope & Stale Res
 
   it('4. Preserves same-user TOKEN_REFRESHED selection and protects Sign Out / Retry Sign Out in Teacher Portal', async () => {
     let profileReads = 0;
-    let resolveTokenRefreshProfile: (val: any) => void;
+    let resolveTokenRefreshProfile: (val: { data: unknown; error: unknown }) => void;
 
     vi.spyOn(supabase.auth, 'getSession').mockResolvedValue({
       data: {
-        session: { user: { id: 'teacher-so-1', email: 't@edutrack.com' }, access_token: 'tok-1' } as any,
+        session: { user: { id: 'teacher-so-1', email: 't@edutrack.com' }, access_token: 'tok-1' } as unknown as Session,
       },
       error: null,
     });
 
-    vi.spyOn(supabase, 'from').mockImplementation((table: string): any => {
+    vi.spyOn(supabase, 'from').mockImplementation(((table: string) => {
       if (table === 'profiles') {
         return {
           select: () => ({
@@ -423,7 +407,7 @@ describe('Teacher Portal Stage C.1 (App Entry Point, Read-Only Scope & Stale Res
                     error: null,
                   });
                 }
-                return new Promise((resolve) => {
+                return new Promise<{ data: unknown; error: unknown }>((resolve) => {
                   resolveTokenRefreshProfile = resolve;
                 });
               },
@@ -432,46 +416,41 @@ describe('Teacher Portal Stage C.1 (App Entry Point, Read-Only Scope & Stale Res
         };
       }
       return { select: () => ({ order: () => Promise.resolve({ data: [], error: null }) }) };
-    });
+    }) as unknown as typeof supabase.from);
 
-    vi.spyOn(supabase, 'rpc').mockImplementation((fnName: string, params?: any): any => {
+    vi.spyOn(supabase, 'rpc').mockImplementation((fnName: string, args?: unknown) => {
+      const params = args as { p_group_id?: string } | undefined;
       if (fnName === 'get_teacher_portal_context') {
-        return Promise.resolve({
-          data: {
-            linked: true,
-            teacher: { id: 'tk-1', full_name: 'Teacher KeepState', subject: 'History' },
-            groups: [
-              { id: GRP_ONE, name: 'Group One', grade_level: 'Grade 7', student_count: 1 },
-              { id: GRP_TWO, name: 'Group Two', grade_level: 'Grade 8', student_count: 1 },
-            ],
-          },
-          error: null,
+        return rpcResolve({
+          linked: true,
+          teacher: { id: 'tk-1', full_name: 'Teacher KeepState', subject: 'History' },
+          groups: [
+            { id: GRP_ONE, name: 'Group One', grade_level: 'Grade 7', student_count: 1 },
+            { id: GRP_TWO, name: 'Group Two', grade_level: 'Grade 8', student_count: 1 },
+          ],
         });
       }
-      return Promise.resolve({
-        data: {
-          group: {
-            id: params?.p_group_id,
-            name: params?.p_group_id === GRP_TWO ? 'Group Two' : 'Group One',
-            grade_level: 'Grade 8',
-          },
-          students: [
-            {
-              id: `stu-${params?.p_group_id}`,
-              full_name: params?.p_group_id === GRP_TWO ? 'Selected Two Student' : 'First Student',
-              student_code: 'CODE-1',
-              status: 'active',
-              group_id: params?.p_group_id,
-            },
-          ],
+      return rpcResolve({
+        group: {
+          id: params?.p_group_id,
+          name: params?.p_group_id === GRP_TWO ? 'Group Two' : 'Group One',
+          grade_level: 'Grade 8',
         },
-        error: null,
+        students: [
+          {
+            id: `stu-${params?.p_group_id}`,
+            full_name: params?.p_group_id === GRP_TWO ? 'Selected Two Student' : 'First Student',
+            student_code: 'CODE-1',
+            status: 'active',
+            group_id: params?.p_group_id,
+          },
+        ],
       });
     });
 
     const signOutSpy = vi
       .spyOn(supabase.auth, 'signOut')
-      .mockResolvedValueOnce({ error: { message: 'Signout failed in TeacherPortal' } as any })
+      .mockResolvedValueOnce({ error: { message: 'Signout failed in TeacherPortal' } as unknown as AuthError })
       .mockResolvedValueOnce({ error: null });
 
     render(<App />);
@@ -491,7 +470,7 @@ describe('Teacher Portal Stage C.1 (App Entry Point, Read-Only Scope & Stale Res
       authStateCallback?.('TOKEN_REFRESHED', {
         user: { id: 'teacher-so-1', email: 't@edutrack.com' },
         access_token: 'tok-2',
-      });
+      } as unknown as Session);
     });
     expect(screen.getByTestId('teacher-portal-revalidating-banner')).toBeDefined();
     expect(screen.getByText('Selected Two Student')).toBeDefined();
@@ -528,38 +507,30 @@ describe('Teacher Portal Stage C.1 (App Entry Point, Read-Only Scope & Stale Res
   it('5. Teacher saves grade and note (internal default), reloads App, and reads saved records back from database RPCs', async () => {
     setupTeacherAuthSession('teacher-c2-save', 'Hossam Teacher');
 
-    const persistedGrades: any[] = [];
-    const persistedNotes: any[] = [];
+    const persistedGrades: Array<Record<string, unknown>> = [];
+    const persistedNotes: Array<Record<string, unknown>> = [];
     const today = getCairoDateString();
 
-    const rpcSpy = vi.spyOn(supabase, 'rpc').mockImplementation((fnName: string, params?: any): any => {
+    const rpcSpy = vi.spyOn(supabase, 'rpc').mockImplementation((fnName: string, args?: unknown) => {
+      const params = (args ?? {}) as Record<string, unknown>;
       if (fnName === 'get_teacher_portal_context') {
-        return Promise.resolve({
-          data: {
-            linked: true,
-            teacher: { id: 'tch-c2-1', full_name: 'Hossam Teacher', subject: 'Physics' },
-            groups: [{ id: GRP_1, name: 'Physics 10A', grade_level: 'Grade 10', student_count: 1 }],
-          },
-          error: null,
+        return rpcResolve({
+          linked: true,
+          teacher: { id: 'tch-c2-1', full_name: 'Hossam Teacher', subject: 'Physics' },
+          groups: [{ id: GRP_1, name: 'Physics 10A', grade_level: 'Grade 10', student_count: 1 }],
         });
       }
       if (fnName === 'get_teacher_group_students') {
-        return Promise.resolve({
-          data: {
-            group: { id: GRP_1, name: 'Physics 10A', grade_level: 'Grade 10' },
-            students: [{ id: STU_1, full_name: 'Laila Adel', student_code: 'ET-301', status: 'active', group_id: GRP_1 }],
-          },
-          error: null,
+        return rpcResolve({
+          group: { id: GRP_1, name: 'Physics 10A', grade_level: 'Grade 10' },
+          students: [{ id: STU_1, full_name: 'Laila Adel', student_code: 'ET-301', status: 'active', group_id: GRP_1 }],
         });
       }
       if (fnName === 'get_teacher_student_records') {
-        return Promise.resolve({
-          data: {
-            student: { id: STU_1, full_name: 'Laila Adel', student_code: 'ET-301', status: 'active', group_id: GRP_1 },
-            grades: [...persistedGrades],
-            notes: [...persistedNotes],
-          },
-          error: null,
+        return rpcResolve({
+          student: { id: STU_1, full_name: 'Laila Adel', student_code: 'ET-301', status: 'active', group_id: GRP_1 },
+          grades: [...persistedGrades],
+          notes: [...persistedNotes],
         });
       }
       if (fnName === 'save_teacher_student_grade') {
@@ -578,7 +549,7 @@ describe('Teacher Portal Stage C.1 (App Entry Point, Read-Only Scope & Stale Res
           created_at: new Date().toISOString(),
         };
         persistedGrades.push(created);
-        return Promise.resolve({ data: { grade: created }, error: null });
+        return rpcResolve({ grade: created });
       }
       if (fnName === 'save_teacher_student_note') {
         const created = {
@@ -592,9 +563,9 @@ describe('Teacher Portal Stage C.1 (App Entry Point, Read-Only Scope & Stale Res
           created_at: new Date().toISOString(),
         };
         persistedNotes.push(created);
-        return Promise.resolve({ data: { note: created }, error: null });
+        return rpcResolve({ note: created });
       }
-      return Promise.resolve({ data: null, error: null });
+      return rpcResolve(null);
     });
 
     const { unmount } = render(<App />);
@@ -660,59 +631,48 @@ describe('Teacher Portal Stage C.1 (App Entry Point, Read-Only Scope & Stale Res
   it('6. Disambiguates two identical student names by student_code and saves specifically for the chosen code', async () => {
     setupTeacherAuthSession('teacher-dup-names', 'Nour Teacher');
 
-    const saveCalls: any[] = [];
-    vi.spyOn(supabase, 'rpc').mockImplementation((fnName: string, params?: any): any => {
+    const saveCalls: Array<Record<string, unknown>> = [];
+    vi.spyOn(supabase, 'rpc').mockImplementation((fnName: string, args?: unknown) => {
+      const params = args as Record<string, unknown> | undefined;
       if (fnName === 'get_teacher_portal_context') {
-        return Promise.resolve({
-          data: {
-            linked: true,
-            teacher: { id: 'tch-dn-1', full_name: 'Nour Teacher', subject: 'Arabic' },
-            groups: [{ id: GRP_1, name: 'Grade 8C', grade_level: 'Grade 8', student_count: 2 }],
-          },
-          error: null,
+        return rpcResolve({
+          linked: true,
+          teacher: { id: 'tch-dn-1', full_name: 'Nour Teacher', subject: 'Arabic' },
+          groups: [{ id: GRP_1, name: 'Grade 8C', grade_level: 'Grade 8', student_count: 2 }],
         });
       }
       if (fnName === 'get_teacher_group_students') {
-        return Promise.resolve({
-          data: {
-            group: { id: GRP_1, name: 'Grade 8C', grade_level: 'Grade 8' },
-            students: [
-              { id: STU_1, full_name: 'Mohamed Ali', student_code: 'ET-101', status: 'active', group_id: GRP_1 },
-              { id: STU_2, full_name: 'Mohamed Ali', student_code: 'ET-102', status: 'active', group_id: GRP_1 },
-            ],
-          },
-          error: null,
+        return rpcResolve({
+          group: { id: GRP_1, name: 'Grade 8C', grade_level: 'Grade 8' },
+          students: [
+            { id: STU_1, full_name: 'Mohamed Ali', student_code: 'ET-101', status: 'active', group_id: GRP_1 },
+            { id: STU_2, full_name: 'Mohamed Ali', student_code: 'ET-102', status: 'active', group_id: GRP_1 },
+          ],
         });
       }
-      if (fnName === 'get_teacher_student_records') {
-        return Promise.resolve({
-          data: {
-            student: { id: params.p_student_id, full_name: 'Mohamed Ali', student_code: 'ET-102', status: 'active', group_id: GRP_1 },
-            grades: [],
-            notes: [],
-          },
-          error: null,
+      if (fnName === 'get_teacher_student_records' && params) {
+        return rpcResolve({
+          student: { id: params.p_student_id, full_name: 'Mohamed Ali', student_code: 'ET-102', status: 'active', group_id: GRP_1 },
+          grades: [],
+          notes: [],
         });
       }
-      if (fnName === 'save_teacher_student_note') {
+      if (fnName === 'save_teacher_student_note' && params) {
         saveCalls.push(params);
-        return Promise.resolve({
-          data: {
-            note: {
-              id: 'note-dn-1',
-              student_id: params.p_student_id,
-              teacher_id: 'tch-dn-1',
-              author_name: 'Nour Teacher',
-              feedback_text: params.p_feedback_text,
-              is_parent_visible: params.p_is_parent_visible,
-              note_date: getCairoDateString(),
-              created_at: new Date().toISOString(),
-            },
+        return rpcResolve({
+          note: {
+            id: 'note-dn-1',
+            student_id: params.p_student_id,
+            teacher_id: 'tch-dn-1',
+            author_name: 'Nour Teacher',
+            feedback_text: params.p_feedback_text,
+            is_parent_visible: params.p_is_parent_visible,
+            note_date: getCairoDateString(),
+            created_at: new Date().toISOString(),
           },
-          error: null,
         });
       }
-      return Promise.resolve({ data: null, error: null });
+      return rpcResolve(null);
     });
 
     render(<App />);
@@ -748,17 +708,17 @@ describe('Teacher Portal Stage C.1 (App Entry Point, Read-Only Scope & Stale Res
     expect(normalizeStudentStatus('active')).toBe('active');
 
     let profileReads = 0;
-    let resolveRefreshProfile: (val: any) => void;
-    let resolveSaveGrade: (val: any) => void;
+    let resolveRefreshProfile: (val: { data: unknown; error: unknown }) => void;
+    let resolveSaveGrade: (val: RpcResolved) => void;
 
     vi.spyOn(supabase.auth, 'getSession').mockResolvedValue({
       data: {
-        session: { user: { id: 'teacher-reval-c2', email: 't@edutrack.com' }, access_token: 'tok-1' } as any,
+        session: { user: { id: 'teacher-reval-c2', email: 't@edutrack.com' }, access_token: 'tok-1' } as unknown as Session,
       },
       error: null,
     });
 
-    vi.spyOn(supabase, 'from').mockImplementation((table: string): any => {
+    vi.spyOn(supabase, 'from').mockImplementation(((table: string) => {
       if (table === 'profiles') {
         return {
           select: () => ({
@@ -771,7 +731,7 @@ describe('Teacher Portal Stage C.1 (App Entry Point, Read-Only Scope & Stale Res
                     error: null,
                   });
                 }
-                return new Promise((resolve) => {
+                return new Promise<{ data: unknown; error: unknown }>((resolve) => {
                   resolveRefreshProfile = resolve;
                 });
               },
@@ -780,55 +740,47 @@ describe('Teacher Portal Stage C.1 (App Entry Point, Read-Only Scope & Stale Res
         };
       }
       return { select: () => ({ order: () => Promise.resolve({ data: [], error: null }) }) };
-    });
+    }) as unknown as typeof supabase.from);
 
     const saveGradeSpy = vi.fn(
       () =>
-        new Promise((resolve) => {
+        new Promise<RpcResolved>((resolve) => {
           resolveSaveGrade = resolve;
         })
     );
 
-    vi.spyOn(supabase, 'rpc').mockImplementation((fnName: string, params?: any): any => {
+    vi.spyOn(supabase, 'rpc').mockImplementation((fnName: string, args?: unknown) => {
+      const params = (args ?? {}) as Record<string, unknown>;
       if (fnName === 'get_teacher_portal_context') {
-        return Promise.resolve({
-          data: {
-            linked: true,
-            teacher: { id: 'tch-g-1', full_name: 'Teacher Guard', subject: 'Science' },
-            groups: [{ id: GRP_1, name: 'Grade 7A', grade_level: 'Grade 7', student_count: 2 }],
-          },
-          error: null,
+        return rpcResolve({
+          linked: true,
+          teacher: { id: 'tch-g-1', full_name: 'Teacher Guard', subject: 'Science' },
+          groups: [{ id: GRP_1, name: 'Grade 7A', grade_level: 'Grade 7', student_count: 2 }],
         });
       }
       if (fnName === 'get_teacher_group_students') {
-        return Promise.resolve({
-          data: {
-            group: { id: GRP_1, name: 'Grade 7A', grade_level: 'Grade 7' },
-            students: [
-              { id: STU_1, full_name: 'Active Girl', student_code: 'ACT-1', status: 'active', group_id: GRP_1 },
-              { id: STU_UNK, full_name: 'Weird Status Boy', student_code: 'UNK-1', status: 'archived_legacy', group_id: GRP_1 },
-            ],
-          },
-          error: null,
+        return rpcResolve({
+          group: { id: GRP_1, name: 'Grade 7A', grade_level: 'Grade 7' },
+          students: [
+            { id: STU_1, full_name: 'Active Girl', student_code: 'ACT-1', status: 'active', group_id: GRP_1 },
+            { id: STU_UNK, full_name: 'Weird Status Boy', student_code: 'UNK-1', status: 'archived_legacy', group_id: GRP_1 },
+          ],
         });
       }
       if (fnName === 'get_teacher_student_records') {
         const isUnknown = params.p_student_id === STU_UNK;
-        return Promise.resolve({
-          data: {
-            student: isUnknown
-              ? { id: STU_UNK, full_name: 'Weird Status Boy', student_code: 'UNK-1', status: 'archived_legacy', group_id: GRP_1 }
-              : { id: STU_1, full_name: 'Active Girl', student_code: 'ACT-1', status: 'active', group_id: GRP_1 },
-            grades: [],
-            notes: [],
-          },
-          error: null,
+        return rpcResolve({
+          student: isUnknown
+            ? { id: STU_UNK, full_name: 'Weird Status Boy', student_code: 'UNK-1', status: 'archived_legacy', group_id: GRP_1 }
+            : { id: STU_1, full_name: 'Active Girl', student_code: 'ACT-1', status: 'active', group_id: GRP_1 },
+          grades: [],
+          notes: [],
         });
       }
       if (fnName === 'save_teacher_student_grade') {
-        return saveGradeSpy();
+        return saveGradeSpy() as unknown as RpcReturn;
       }
-      return Promise.resolve({ data: null, error: null });
+      return rpcResolve(null);
     });
 
     render(<App />);
@@ -859,7 +811,7 @@ describe('Teacher Portal Stage C.1 (App Entry Point, Read-Only Scope & Stale Res
       authStateCallback?.('TOKEN_REFRESHED', {
         user: { id: 'teacher-reval-c2', email: 't@edutrack.com' },
         access_token: 'tok-2',
-      });
+      } as unknown as Session);
     });
 
     const saveBtnDuringRefresh = screen.getByRole('button', { name: /Save Grade/i }) as HTMLButtonElement;
@@ -904,7 +856,7 @@ describe('Teacher Portal Stage C.1 (App Entry Point, Read-Only Scope & Stale Res
           },
         },
         error: null,
-      });
+      } as unknown as RpcResolved);
     });
 
     await waitFor(() => {
@@ -918,27 +870,22 @@ describe('Teacher Portal Stage C.1 (App Entry Point, Read-Only Scope & Stale Res
     let recordsFail = false;
     let contextCalls = 0;
 
-    const rpcSpy = vi.spyOn(supabase, 'rpc').mockImplementation((fnName: string, params?: any): any => {
+    const rpcSpy = vi.spyOn(supabase, 'rpc').mockImplementation((fnName: string, args?: unknown) => {
+      const params = (args ?? {}) as Record<string, unknown>;
       if (fnName === 'get_teacher_portal_context') {
         contextCalls++;
-        return Promise.resolve({
-          data: {
-            linked: true,
-            teacher: { id: 'tch-pe-1', full_name: 'Samy Teacher', subject: 'English' },
-            groups: contextCalls === 1
-              ? [{ id: GRP_1, name: 'English 10A', grade_level: 'Grade 10', student_count: 1 }]
-              : [],
-          },
-          error: null,
+        return rpcResolve({
+          linked: true,
+          teacher: { id: 'tch-pe-1', full_name: 'Samy Teacher', subject: 'English' },
+          groups: contextCalls === 1
+            ? [{ id: GRP_1, name: 'English 10A', grade_level: 'Grade 10', student_count: 1 }]
+            : [],
         });
       }
       if (fnName === 'get_teacher_group_students') {
-        return Promise.resolve({
-          data: {
-            group: { id: GRP_1, name: 'English 10A', grade_level: 'Grade 10' },
-            students: [{ id: STU_1, full_name: 'Rami Tarek', student_code: 'ENG-1', status: 'active', group_id: GRP_1 }],
-          },
-          error: null,
+        return rpcResolve({
+          group: { id: GRP_1, name: 'English 10A', grade_level: 'Grade 10' },
+          students: [{ id: STU_1, full_name: 'Rami Tarek', student_code: 'ENG-1', status: 'active', group_id: GRP_1 }],
         });
       }
       if (fnName === 'get_teacher_student_records') {

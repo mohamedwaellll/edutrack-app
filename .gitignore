@@ -11,6 +11,7 @@ lerna-debug.log*
 node_modules
 dist
 dist-ssr
+.tmp
 *.local
 
 # Python
@@ -23,8 +24,12 @@ venv/
 
 # Environment Variables
 .env
-.env*.local
-.env.production
+.env.*
+!.env.example
+
+# Supabase CLI state
+supabase/.branches/
+supabase/.temp/
 
 # Editor & OS files
 .vscode/*

@@ -25,8 +25,8 @@ describe('Admin Flow Service Simulation (In-Memory Supabase Mock Unit Test)', ()
       },
     ];
 
-    const dbStudents: any[] = [];
-    const dbLogs: any[] = [];
+    const dbStudents: Array<Record<string, unknown>> = [];
+    const dbLogs: Array<Record<string, unknown>> = [];
 
     // Mock supabase.from queries based on table
     const mockFrom = vi.fn().mockImplementation((table: string) => {
@@ -94,7 +94,7 @@ describe('Admin Flow Service Simulation (In-Memory Supabase Mock Unit Test)', ()
       };
     });
 
-    // @ts-ignore
+    // @ts-expect-error test spy override for supabase.from
     clientModule.supabase.from = mockFrom;
 
     // STEP 1: Admin views groups

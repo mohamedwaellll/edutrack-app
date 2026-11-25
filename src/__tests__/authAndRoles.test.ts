@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { Session } from '@supabase/supabase-js';
-import { resolveAuthAccessDecision, AuthPortalStatus } from '../contexts/AuthContext';
+import { resolveAuthAccessDecision, AuthPortalStatus } from '../contexts/authState';
 import { UserProfile } from '../types/database';
 
 function makeSession(userId: string): Session {

@@ -9,6 +9,7 @@ import {
   WeeklyAttendancePoint,
   CreateStudentInput,
   CreateGroupInput,
+  UpdateGroupInput,
   CreateTeacherInput
 } from '../types/database';
 
@@ -28,6 +29,83 @@ export interface AdminDashboardOverviewData {
   weeklyAttendance: WeeklyAttendancePoint[];
   recentActivities: RecentActivity[];
   studentAttendance: AttendanceRecord[];
+}
+
+interface RawGroupRow {
+  id: string;
+  name: string;
+  grade_level: string;
+  teacher_id?: string | null;
+  teachers?: { full_name?: string | null } | null;
+  subject?: string | null;
+  room?: string | null;
+  capacity?: number | null;
+  enrolled_count?: number | null;
+  schedule?: string | null;
+  created_at: string;
+  updated_at?: string;
+}
+
+interface RawStudentRow {
+  id: string;
+  user_id?: string | null;
+  full_name: string;
+  student_code: string;
+  group_id: string | null;
+  groups?: { name?: string | null } | null;
+  grade_level: string;
+  qr_code_hash: string;
+  parent_name?: string | null;
+  parent_phone?: string | null;
+  status: Student['status'];
+  created_at: string;
+}
+
+interface RawTeacherRow {
+  id: string;
+  user_id?: string | null;
+  full_name: string;
+  subject: string;
+  email: string;
+  phone?: string | null;
+  room_number?: string | null;
+  created_at: string;
+}
+
+interface RawAttendanceOverviewRow {
+  id: string;
+  student_id: string;
+  students?: { full_name?: string | null } | null;
+  groups?: { name?: string | null } | null;
+  status: AttendanceRecord['status'];
+  check_in_time?: string | null;
+  date: string;
+  scan_method?: AttendanceRecord['method'];
+}
+
+interface RawActivityRow {
+  id: string;
+  title: string;
+  description: string;
+  created_at: string;
+  type: RecentActivity['type'];
+}
+
+function getServiceErrorMessage(err: unknown, fallback: string): string {
+  if (err instanceof Error && err.message) return err.message;
+  if (typeof err === 'object' && err !== null && 'message' in err) {
+    const msg = (err as { message?: unknown }).message;
+    if (typeof msg === 'string' && msg) return msg;
+  }
+  return fallback;
+}
+
+async function logActivitySafely(title: string, description: string, type: RecentActivity['type']): Promise<void> {
+  try {
+    await supabase.from('activity_logs').insert([{ title, description, type }]);
+  } catch (err: unknown) {
+    console.warn('Activity log write skipped:', getServiceErrorMessage(err, 'Unknown error'));
+  }
 }
 
 export const adminService = {
@@ -53,7 +131,7 @@ export const adminService = {
         return { data: null, error: error.message, code: error.code };
       }
 
-      const formatted: GroupClass[] = (data || []).map((d: any) => ({
+      const formatted: GroupClass[] = ((data || []) as RawGroupRow[]).map((d) => ({
         id: d.id,
         name: d.name,
         grade_level: d.grade_level,
@@ -69,8 +147,8 @@ export const adminService = {
       }));
 
       return { data: formatted, error: null };
-    } catch (err: any) {
-      return { data: null, error: err.message || 'Failed to fetch classes' };
+    } catch (err: unknown) {
+      return { data: null, error: getServiceErrorMessage(err, 'Failed to fetch classes') };
     }
   },
 
@@ -95,7 +173,7 @@ export const adminService = {
         return { data: null, error: error.message, code: error.code };
       }
 
-      const formatted: Student[] = (data || []).map((s: any) => ({
+      const formatted: Student[] = ((data || []) as RawStudentRow[]).map((s) => ({
         id: s.id,
         user_id: s.user_id,
         full_name: s.full_name,
@@ -111,8 +189,8 @@ export const adminService = {
       }));
 
       return { data: formatted, error: null };
-    } catch (err: any) {
-      return { data: null, error: err.message || 'Failed to fetch students' };
+    } catch (err: unknown) {
+      return { data: null, error: getServiceErrorMessage(err, 'Failed to fetch students') };
     }
   },
 
@@ -141,12 +219,12 @@ export const adminService = {
         return { data: null, error: groupsRes.error.message, code: groupsRes.error.code };
       }
 
-      const groups = groupsRes.data || [];
+      const groups = (groupsRes.data || []) as Array<{ id: string; name: string; teacher_id: string | null }>;
 
-      const formatted: Teacher[] = (teachersRes.data || []).map((t: any) => {
+      const formatted: Teacher[] = ((teachersRes.data || []) as RawTeacherRow[]).map((t) => {
         const assignedClasses = groups
-          .filter((g: any) => g.teacher_id === t.id)
-          .map((g: any) => g.name);
+          .filter((g) => g.teacher_id === t.id)
+          .map((g) => g.name);
 
         return {
           id: t.id,
@@ -168,8 +246,8 @@ export const adminService = {
       });
 
       return { data: formatted, error: null };
-    } catch (err: any) {
-      return { data: null, error: err.message || 'Failed to fetch teachers' };
+    } catch (err: unknown) {
+      return { data: null, error: getServiceErrorMessage(err, 'Failed to fetch teachers') };
     }
   },
 
@@ -270,7 +348,7 @@ export const adminService = {
         };
       });
 
-      const studentAttendance: AttendanceRecord[] = (recentAttendanceRes.data || []).map((item: any) => ({
+      const studentAttendance: AttendanceRecord[] = ((recentAttendanceRes.data || []) as RawAttendanceOverviewRow[]).map((item) => ({
         id: item.id,
         student_id: item.student_id,
         student_name: item.students?.full_name || 'Student',
@@ -281,7 +359,7 @@ export const adminService = {
         method: item.scan_method,
       }));
 
-      const recentActivities: RecentActivity[] = (activityRes.data || []).map((act: any) => ({
+      const recentActivities: RecentActivity[] = ((activityRes.data || []) as RawActivityRow[]).map((act) => ({
         id: act.id,
         title: act.title,
         description: act.description,
@@ -317,8 +395,8 @@ export const adminService = {
         },
         error: null,
       };
-    } catch (err: any) {
-      return { data: null, error: err.message || 'Failed to load dashboard overview' };
+    } catch (err: unknown) {
+      return { data: null, error: getServiceErrorMessage(err, 'Failed to load dashboard overview') };
     }
   },
 
@@ -387,15 +465,7 @@ export const adminService = {
       }
 
       // Log activity
-      try {
-        await supabase.from('activity_logs').insert([
-          {
-            title: 'New student enrolled',
-            description: `${data.full_name} • ${data.grade_level}`,
-            type: 'student',
-          },
-        ]);
-      } catch {}
+      await logActivitySafely('New student enrolled', `${data.full_name} • ${data.grade_level}`, 'student');
 
       const createdStudent: Student = {
         id: data.id,
@@ -413,8 +483,8 @@ export const adminService = {
       };
 
       return { data: createdStudent, error: null };
-    } catch (err: any) {
-      return { data: null, error: err.message || 'Failed to save student to database' };
+    } catch (err: unknown) {
+      return { data: null, error: getServiceErrorMessage(err, 'Failed to save student to database') };
     }
   },
 
@@ -460,15 +530,7 @@ export const adminService = {
         return { data: null, error: error.message, code: error.code };
       }
 
-      try {
-        await supabase.from('activity_logs').insert([
-          {
-            title: 'Class group created',
-            description: `${data.name} • ${data.subject}`,
-            type: 'schedule',
-          },
-        ]);
-      } catch {}
+      await logActivitySafely('Class group created', `${data.name} • ${data.subject}`, 'schedule');
 
       const createdGroup: GroupClass = {
         id: data.id,
@@ -486,8 +548,88 @@ export const adminService = {
       };
 
       return { data: createdGroup, error: null };
-    } catch (err: any) {
-      return { data: null, error: err.message || 'Failed to save group to database' };
+    } catch (err: unknown) {
+      return { data: null, error: getServiceErrorMessage(err, 'Failed to save group to database') };
+    }
+  },
+
+  /**
+   * Updates editable metadata for an existing class group in Supabase.
+   * Preserves teacher_id, enrolled_count, id, and all historical/membership links.
+   */
+  async updateClass(input: UpdateGroupInput): Promise<ServiceResult<GroupClass>> {
+    if (!isSupabaseConfigured()) {
+      return {
+        data: null,
+        error: 'Supabase credentials are not configured in .env',
+      };
+    }
+
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!input.id || !uuidRegex.test(input.id)) {
+      return { data: null, error: 'A valid group UUID is required.' };
+    }
+
+    const trimmedName = (input.name || '').trim();
+    if (!trimmedName) {
+      return { data: null, error: 'Group/Class name is required.' };
+    }
+
+    const trimmedGrade = (input.grade_level || '').trim();
+    if (!trimmedGrade) {
+      return { data: null, error: 'Grade level is required.' };
+    }
+
+    if (!Number.isInteger(input.capacity) || input.capacity <= 0) {
+      return { data: null, error: 'Capacity must be a positive whole number.' };
+    }
+
+    try {
+      const payload = {
+        name: trimmedName,
+        grade_level: trimmedGrade,
+        subject: input.subject?.trim() || 'General',
+        room: input.room?.trim() || 'Room 204',
+        capacity: input.capacity,
+        schedule: input.schedule?.trim() || 'Sun - Thu: 08:00 AM - 02:00 PM',
+        updated_at: new Date().toISOString(),
+      };
+
+      const { data, error } = await supabase
+        .from('groups')
+        .update(payload)
+        .eq('id', input.id)
+        .select('*, teachers(full_name)')
+        .maybeSingle();
+
+      if (error) {
+        return { data: null, error: error.message, code: error.code };
+      }
+
+      if (!data) {
+        return { data: null, error: 'Class group not found or you lack permission to update it.' };
+      }
+
+      await logActivitySafely('Class group updated', `${data.name} • ${data.subject}`, 'schedule');
+
+      const updatedGroup: GroupClass = {
+        id: data.id,
+        name: data.name,
+        grade_level: data.grade_level,
+        teacher_id: data.teacher_id,
+        teacher_name: data.teachers?.full_name || 'Unassigned',
+        subject: data.subject,
+        room: data.room,
+        capacity: data.capacity,
+        enrolled_count: data.enrolled_count ?? 0,
+        schedule: data.schedule,
+        created_at: data.created_at,
+        updated_at: data.updated_at,
+      };
+
+      return { data: updatedGroup, error: null };
+    } catch (err: unknown) {
+      return { data: null, error: getServiceErrorMessage(err, 'Failed to update group in database') };
     }
   },
 
@@ -557,15 +699,7 @@ export const adminService = {
         return { data: null, error: error.message, code: error.code };
       }
 
-      try {
-        await supabase.from('activity_logs').insert([
-          {
-            title: 'Teacher added',
-            description: `${data.full_name} • ${data.subject} (${data.email})`,
-            type: 'teacher',
-          },
-        ]);
-      } catch {}
+      await logActivitySafely('Teacher added', `${data.full_name} • ${data.subject} (${data.email})`, 'teacher');
 
       const createdTeacher: Teacher = {
         id: data.id,
@@ -585,8 +719,8 @@ export const adminService = {
       };
 
       return { data: createdTeacher, error: null };
-    } catch (err: any) {
-      return { data: null, error: err.message || 'Failed to create teacher' };
+    } catch (err: unknown) {
+      return { data: null, error: getServiceErrorMessage(err, 'Failed to create teacher') };
     }
   },
 
@@ -647,15 +781,11 @@ export const adminService = {
         return { data: null, error: 'Class group not found or you lack permission to update it.' };
       }
 
-      try {
-        await supabase.from('activity_logs').insert([
-          {
-            title: 'Class instructor updated',
-            description: `${data.name} assigned to: ${data.teachers?.full_name || 'Unassigned'}`,
-            type: 'schedule',
-          },
-        ]);
-      } catch {}
+      await logActivitySafely(
+        'Class instructor updated',
+        `${data.name} assigned to: ${data.teachers?.full_name || 'Unassigned'}`,
+        'schedule'
+      );
 
       const updatedGroup: GroupClass = {
         id: data.id,
@@ -673,8 +803,63 @@ export const adminService = {
       };
 
       return { data: updatedGroup, error: null };
-    } catch (err: any) {
-      return { data: null, error: err.message || 'Failed to update group instructor' };
+    } catch (err: unknown) {
+      return { data: null, error: getServiceErrorMessage(err, 'Failed to update group instructor') };
+    }
+  },
+
+  /**
+   * Updates a student's enrollment status via narrow admin RPC with atomic expected-status compare.
+   */
+  async updateStudentStatus(
+    studentId: string,
+    newStatus: Student['status'],
+    expectedStatus: Student['status'] | null
+  ): Promise<ServiceResult<{ id: string; status: Student['status'] }>> {
+    if (!isSupabaseConfigured()) {
+      return {
+        data: null,
+        error: 'Supabase credentials are not configured in .env',
+      };
+    }
+
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!studentId || !uuidRegex.test(studentId.trim())) {
+      return { data: null, error: 'A valid student UUID is required.' };
+    }
+
+    const validStatuses: Student['status'][] = ['active', 'suspended', 'graduated'];
+    if (!validStatuses.includes(newStatus) || (expectedStatus !== null && !validStatuses.includes(expectedStatus))) {
+      return { data: null, error: 'Invalid student enrollment status.' };
+    }
+
+    try {
+      const { data, error } = await supabase.rpc('update_student_enrollment_status', {
+        p_student_id: studentId.trim(),
+        p_new_status: newStatus,
+        p_expected_status: expectedStatus,
+      });
+
+      if (error) {
+        return { data: null, error: error.message, code: error.code };
+      }
+
+      if (!data || data.id !== studentId.trim().toLowerCase() || data.status !== newStatus) {
+        return { data: null, error: 'Unexpected response from student status update.' };
+      }
+
+      await logActivitySafely(
+        'Student enrollment status updated',
+        `Student ${data.id} set to ${data.status}`,
+        'student'
+      );
+
+      return {
+        data: { id: data.id, status: data.status },
+        error: null,
+      };
+    } catch (err: unknown) {
+      return { data: null, error: getServiceErrorMessage(err, 'Failed to update student enrollment status') };
     }
   },
 };

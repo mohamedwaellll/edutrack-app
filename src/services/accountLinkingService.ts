@@ -264,7 +264,17 @@ export const accountLinkingService = {
         return { data: null, error: mapped.error, code: mapped.code };
       }
 
-      const formatted: ParentStudentLink[] = (data || []).map((row: any) => ({
+      interface ParentStudentLinkRow {
+        id: string;
+        parent_id: string;
+        student_id: string;
+        created_at: string;
+        created_by?: string | null;
+        parent?: { full_name?: string; email?: string } | null;
+        student?: { full_name?: string; student_code?: string } | null;
+      }
+
+      const formatted: ParentStudentLink[] = ((data || []) as ParentStudentLinkRow[]).map((row) => ({
         id: row.id,
         parent_id: row.parent_id,
         student_id: row.student_id,

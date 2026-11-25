@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -32,6 +33,19 @@ const MIGRATIONS = [
   '20261121000006_edutrack_stage_c2_teacher_grade_and_note_writes.sql',
   '20261121000007_edutrack_stage_d_student_read_only_portal.sql',
   '20261122000001_edutrack_stage_e_parent_read_only_portal.sql',
+  '20261124000001_edutrack_assignments_stage_f1.sql',
+  '20261124000002_edutrack_assignment_submissions_stage_f2.sql',
+  '20261124000003_edutrack_assignment_grading_stage_f3.sql',
+  '20261124000004_edutrack_assignment_grade_version_concurrency.sql',
+  '20261124000005_edutrack_assignment_pdf_attachments_stage_f4.sql',
+  '20261124000006_edutrack_submission_pdf_attachments_stage_f5.sql',
+  '20261124000007_edutrack_parent_child_assignments_stage_f6.sql',
+  '20261124000008_edutrack_edit_assignment_stage_f7.sql',
+  '20261124000009_edutrack_student_submit_version_conflict_stage_f8.sql',
+  '20261124000010_edutrack_storage_rls_fix.sql',
+  '20261124000011_edutrack_admin_edit_group_columns.sql',
+  '20261124000012_edutrack_admin_student_enrollment_status.sql',
+  '20261124000013_edutrack_group_discussion_chat.sql',
 ];
 
 export const DEMO_USERS = {
@@ -161,6 +175,26 @@ async function initDemoDatabase() {
     SELECT public.link_student_account('${STUDENT_REC_ID}'::uuid, '${studentUserId}'::uuid);
     SELECT public.link_parent_student('${parentUserId}'::uuid, '${STUDENT_REC_ID}'::uuid);
 
+    INSERT INTO public.assignments (id, group_id, teacher_id, title, instructions, due_at)
+      VALUES (
+        '60000000-0000-4000-8000-000000000001'::uuid,
+        '${GROUP_ID}'::uuid,
+        '${TEACHER_REC_ID}'::uuid,
+        'واجب الحركة (تجريبي)',
+        'احسب السرعة المتوسطة مع كتابة مثال تطبيقي.',
+        NOW() - INTERVAL '2 hours'
+      );
+
+    INSERT INTO public.assignment_submissions (id, assignment_id, student_id, answer_text, submitted_at, updated_at)
+      VALUES (
+        '70000000-0000-4000-8000-000000000001'::uuid,
+        '60000000-0000-4000-8000-000000000001'::uuid,
+        '${STUDENT_REC_ID}'::uuid,
+        'السرعة = المسافة ÷ الزمن، مثال: 100م في 10ث = 10م/ث',
+        NOW() - INTERVAL '3 hours',
+        NOW() - INTERVAL '2 hours 30 minutes'
+      );
+
     RESET ROLE;
   `);
 }
@@ -193,6 +227,90 @@ function parseBody(req) {
         resolve({});
       }
     });
+  });
+}
+
+function readRawBody(req) {
+  return new Promise((resolve) => {
+    const chunks = [];
+    req.on('data', (chunk) => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
+    req.on('end', () => resolve(Buffer.concat(chunks)));
+  });
+}
+
+function extractUploadedFile(rawBuf, contentTypeHeader) {
+  const ct = String(contentTypeHeader || '');
+  const boundaryMatch = ct.match(/boundary=([^\s;]+)/i);
+  if (!boundaryMatch) {
+    return { buffer: rawBuf, mimeType: ct.split(';')[0].trim().toLowerCase() };
+  }
+  const boundary = boundaryMatch[1].replace(/^"|"$/g, '');
+  const sep = Buffer.from(`--${boundary}`);
+  let pos = rawBuf.indexOf(sep);
+  while (pos !== -1) {
+    const headerStart = pos + sep.length + 2; // skip \r\n
+    if (headerStart >= rawBuf.length) break;
+    const headerEnd = rawBuf.indexOf(Buffer.from('\r\n\r\n'), headerStart);
+    if (headerEnd === -1) break;
+    const headersText = rawBuf.subarray(headerStart, headerEnd).toString('utf8');
+    const dataStart = headerEnd + 4;
+    const nextSep = rawBuf.indexOf(sep, dataStart);
+    if (nextSep === -1) break;
+    const dataEnd = nextSep - 2; // strip trailing \r\n
+    if (/filename=/i.test(headersText) || /name=""/i.test(headersText) || !/name="cacheControl"/i.test(headersText)) {
+      const partCtMatch = headersText.match(/content-type:\s*([^\r\n;]+)/i);
+      const partMime = partCtMatch ? partCtMatch[1].trim().toLowerCase() : 'application/octet-stream';
+      return {
+        buffer: rawBuf.subarray(dataStart, Math.max(dataStart, dataEnd)),
+        mimeType: partMime,
+      };
+    }
+    pos = nextSep;
+  }
+  return { buffer: rawBuf, mimeType: 'application/octet-stream' };
+}
+
+const demoStorageObjects = new Map();
+const demoSignedTokens = new Map();
+const MAX_ASSIGNMENT_PDF_BYTES = 5 * 1024 * 1024;
+
+async function isUidAuthorizedForAttachmentPath(targetUid, objectPath) {
+  if (!targetUid) return false;
+  return withLock(async () => {
+    try {
+      await db.exec('RESET ROLE;');
+      const lookup = await db.query(
+        `SELECT id FROM public.assignment_attachments WHERE object_path = $1::text LIMIT 1;`,
+        [objectPath]
+      );
+      if (lookup.rows.length === 0) return false;
+      const attachmentId = lookup.rows[0].id;
+      await setAuth(targetUid);
+      await db.query(`SELECT public.authorize_assignment_attachment_download($1::uuid);`, [attachmentId]);
+      return true;
+    } catch {
+      return false;
+    }
+  });
+}
+
+async function isUidAuthorizedForSubmissionAttachmentPath(targetUid, objectPath) {
+  if (!targetUid) return false;
+  return withLock(async () => {
+    try {
+      await db.exec('RESET ROLE;');
+      const lookup = await db.query(
+        `SELECT id FROM public.assignment_submission_attachments WHERE object_path = $1::text LIMIT 1;`,
+        [objectPath]
+      );
+      if (lookup.rows.length === 0) return false;
+      const attachmentId = lookup.rows[0].id;
+      await setAuth(targetUid);
+      await db.query(`SELECT public.authorize_submission_attachment_download($1::uuid);`, [attachmentId]);
+      return true;
+    } catch {
+      return false;
+    }
   });
 }
 
@@ -262,6 +380,167 @@ const server = http.createServer(async (req, res) => {
 
   const url = new URL(req.url, `http://${DEMO_HOST}:${DEMO_BRIDGE_PORT}`);
   const uid = decodeJwtUid(req.headers.authorization);
+
+  // STORAGE ENDPOINTS (Private buckets: assignment-attachments & assignment-submissions)
+  if (url.pathname.startsWith('/storage/v1/object/')) {
+    try {
+      const rest = url.pathname.slice('/storage/v1/object/'.length);
+      const isSupportedBucket = (b) => b === 'assignment-attachments' || b === 'assignment-submissions';
+
+      // 1. Upload: POST /storage/v1/object/<bucket>/<path>.pdf
+      const uploadBucketMatch = rest.match(/^(assignment-attachments|assignment-submissions)\/(.+)$/);
+      if (req.method === 'POST' && uploadBucketMatch) {
+        const bucket = uploadBucketMatch[1];
+        const objectPath = decodeURIComponent(uploadBucketMatch[2]);
+        if (!uid) return sendJson(res, 401, { statusCode: '401', error: 'Unauthorized', message: 'Authentication required.' });
+        if (req.headers['x-demo-storage-fail'] === '1') {
+          return sendJson(res, 500, { statusCode: '500', error: 'StorageError', message: 'Simulated storage upload failure.' });
+        }
+
+        if (bucket === 'assignment-attachments') {
+          const groupIdMatch = objectPath.match(/^([0-9a-f-]{36})\/[^/]+\.pdf$/i);
+          if (!groupIdMatch) {
+            return sendJson(res, 400, { statusCode: '400', error: 'InvalidPath', message: 'Invalid PDF storage path.' });
+          }
+          const targetGroupId = groupIdMatch[1];
+          const allowed = await withLock(async () => {
+            await db.exec('RESET ROLE;');
+            const q = await db.query(
+              `SELECT g.id
+               FROM public.groups g
+               JOIN public.teachers t ON t.id = g.teacher_id
+               JOIN public.profiles p ON p.id = t.user_id
+               WHERE g.id = $1::uuid AND p.id = $2::uuid AND p.role = 'teacher';`,
+              [targetGroupId, uid]
+            );
+            return q.rows.length > 0;
+          });
+          if (!allowed) {
+            return sendJson(res, 403, { statusCode: '403', error: 'Forbidden', message: 'Teacher is not assigned to this group.' });
+          }
+        } else {
+          const subPathMatch = objectPath.match(/^([0-9a-f-]{36})\/([0-9a-f-]{36})\/[^/]+\.pdf$/i);
+          if (!subPathMatch) {
+            return sendJson(res, 400, { statusCode: '400', error: 'InvalidPath', message: 'Invalid submission PDF storage path.' });
+          }
+          const [, targetStudentId, targetAssignmentId] = subPathMatch;
+          const allowed = await withLock(async () => {
+            await db.exec('RESET ROLE;');
+            const q = await db.query(
+              `SELECT s.id
+               FROM public.students s
+               JOIN public.profiles p ON p.id = s.user_id
+               JOIN public.assignments a ON a.group_id = s.group_id
+               WHERE s.id = $1::uuid
+                 AND a.id = $2::uuid
+                 AND p.id = $3::uuid
+                 AND p.role = 'student'
+                 AND s.status = 'active'
+                 AND NOW() < a.due_at;`,
+              [targetStudentId, targetAssignmentId, uid]
+            );
+            return q.rows.length > 0;
+          });
+          if (!allowed) {
+            return sendJson(res, 403, { statusCode: '403', error: 'Forbidden', message: 'Student is not authorized or deadline has passed.' });
+          }
+        }
+
+        const rawBuf = await readRawBody(req);
+        const { buffer, mimeType } = extractUploadedFile(rawBuf, req.headers['content-type']);
+        if (mimeType !== 'application/pdf' || !buffer.subarray(0, 5).equals(Buffer.from('%PDF-'))) {
+          return sendJson(res, 400, { statusCode: '400', error: 'InvalidMimeType', message: 'Only valid PDF files are allowed.' });
+        }
+        if (buffer.length <= 0 || buffer.length > MAX_ASSIGNMENT_PDF_BYTES) {
+          return sendJson(res, 400, { statusCode: '400', error: 'PayloadTooLarge', message: 'PDF size must be between 1 byte and 5 MB.' });
+        }
+        demoStorageObjects.set(`${bucket}:${objectPath}`, {
+          buffer,
+          mimeType: 'application/pdf',
+          sizeBytes: buffer.length,
+          ownerUid: uid,
+        });
+        return sendJson(res, 200, { Key: `${bucket}/${objectPath}`, Id: objectPath });
+      }
+
+      // 2. Create signed URL: POST /storage/v1/object/sign/<bucket>/<path>
+      const signMatch = rest.match(/^sign\/(assignment-attachments|assignment-submissions)\/(.+)$/);
+      if (req.method === 'POST' && signMatch) {
+        const bucket = signMatch[1];
+        const objectPath = decodeURIComponent(signMatch[2]);
+        const authorized =
+          bucket === 'assignment-attachments'
+            ? await isUidAuthorizedForAttachmentPath(uid, objectPath)
+            : await isUidAuthorizedForSubmissionAttachmentPath(uid, objectPath);
+        if (!authorized) {
+          return sendJson(res, 403, { statusCode: '403', error: 'Forbidden', message: 'Access denied to this attachment.' });
+        }
+        if (!demoStorageObjects.has(`${bucket}:${objectPath}`)) {
+          return sendJson(res, 404, { statusCode: '404', error: 'NotFound', message: 'Object not found in storage.' });
+        }
+        const rawBody = await parseBody(req);
+        const expiresIn = Math.max(10, Math.min(300, Number(rawBody.expiresIn) || 60));
+        const token = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+        demoSignedTokens.set(token, {
+          bucket,
+          objectPath,
+          uid,
+          expiresAt: Date.now() + expiresIn * 1000,
+        });
+        return sendJson(res, 200, {
+          signedURL: `/object/sign/${bucket}/${objectPath}?token=${encodeURIComponent(token)}`,
+        });
+      }
+
+      // 3. Download via signed URL: GET /storage/v1/object/sign/<bucket>/<path>?token=...
+      if (req.method === 'GET' && signMatch) {
+        const bucket = signMatch[1];
+        const objectPath = decodeURIComponent(signMatch[2]);
+        const token = url.searchParams.get('token') || '';
+        const tokenEntry = demoSignedTokens.get(token);
+        if (!tokenEntry || tokenEntry.bucket !== bucket || tokenEntry.objectPath !== objectPath || Date.now() > tokenEntry.expiresAt) {
+          return sendJson(res, 403, { statusCode: '403', error: 'InvalidToken', message: 'Signed URL is invalid or expired.' });
+        }
+        const stillAuthorized =
+          bucket === 'assignment-attachments'
+            ? await isUidAuthorizedForAttachmentPath(tokenEntry.uid, objectPath)
+            : await isUidAuthorizedForSubmissionAttachmentPath(tokenEntry.uid, objectPath);
+        if (!stillAuthorized) {
+          return sendJson(res, 403, { statusCode: '403', error: 'Forbidden', message: 'Access revoked for this attachment.' });
+        }
+        const obj = demoStorageObjects.get(`${bucket}:${objectPath}`);
+        if (!obj) {
+          return sendJson(res, 404, { statusCode: '404', error: 'NotFound', message: 'Object not found.' });
+        }
+        res.writeHead(200, {
+          'Content-Type': 'application/pdf',
+          'Content-Length': String(obj.buffer.length),
+          'Access-Control-Allow-Origin': '*',
+        });
+        return res.end(obj.buffer);
+      }
+
+      // 4. Delete object: DELETE /storage/v1/object/<bucket>
+      if (req.method === 'DELETE' && isSupportedBucket(rest)) {
+        if (!uid) return sendJson(res, 401, { message: 'Unauthorized' });
+        const bodyDel = await parseBody(req);
+        const prefixes = Array.isArray(bodyDel.prefixes) ? bodyDel.prefixes : [];
+        for (const p of prefixes) {
+          const key = `${rest}:${p}`;
+          const obj = demoStorageObjects.get(key);
+          if (obj && obj.ownerUid === uid) {
+            demoStorageObjects.delete(key);
+          }
+        }
+        return sendJson(res, 200, []);
+      }
+
+      return sendJson(res, 404, { message: `Unhandled storage route ${req.method} ${url.pathname}` });
+    } catch (err) {
+      return sendJson(res, 400, { message: err?.message || 'Storage error' });
+    }
+  }
+
   const body = req.method === 'GET' || req.method === 'HEAD' ? {} : await parseBody(req);
 
   try {
@@ -306,6 +585,14 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 204, undefined);
     }
 
+    if (url.pathname === '/auth/v1/recover' && req.method === 'POST') {
+      return sendJson(res, 501, {
+        message:
+          'Password reset email delivery requires Supabase Auth and is not supported by the local PGlite demo bridge.',
+        error_code: 'demo_recovery_unsupported',
+      });
+    }
+
     // RPC ENDPOINTS
     if (url.pathname.startsWith('/rest/v1/rpc/') && req.method === 'POST') {
       const fn = url.pathname.replace('/rest/v1/rpc/', '');
@@ -348,6 +635,16 @@ const server = http.createServer(async (req, res) => {
               body.p_parent_id,
               body.p_student_id,
             ]);
+            break;
+          case 'update_student_enrollment_status':
+            q = await db.query(
+              `SELECT public.update_student_enrollment_status($1::uuid, $2::text, $3::text) AS res;`,
+              [
+                body.p_student_id,
+                body.p_new_status,
+                body.p_expected_status ?? null,
+              ]
+            );
             break;
           case 'record_qr_attendance':
             q = await db.query(`SELECT public.record_qr_attendance($1::text, $2::uuid) AS res;`, [
@@ -396,6 +693,94 @@ const server = http.createServer(async (req, res) => {
             break;
           case 'get_parent_child_details':
             q = await db.query(`SELECT public.get_parent_child_details($1::uuid) AS res;`, [body.p_student_id]);
+            break;
+          case 'get_parent_child_assignments':
+            q = await db.query(`SELECT public.get_parent_child_assignments($1::uuid) AS res;`, [body.p_student_id]);
+            break;
+          case 'create_teacher_assignment':
+            q = await db.query(
+              `SELECT public.create_teacher_assignment($1::uuid, $2::text, $3::text, $4::timestamptz, $5::text, $6::text, $7::integer, $8::text) AS res;`,
+              [
+                body.p_group_id,
+                body.p_title,
+                body.p_instructions,
+                body.p_due_at,
+                body.p_attachment_path ?? null,
+                body.p_attachment_name ?? null,
+                body.p_attachment_size ?? null,
+                body.p_attachment_mime_type ?? null,
+              ]
+            );
+            break;
+          case 'authorize_assignment_attachment_download':
+            q = await db.query(
+              `SELECT public.authorize_assignment_attachment_download($1::uuid) AS res;`,
+              [body.p_attachment_id]
+            );
+            break;
+          case 'get_teacher_assignments':
+            q = await db.query(`SELECT public.get_teacher_assignments($1::uuid) AS res;`, [body.p_group_id]);
+            break;
+          case 'update_teacher_assignment':
+            q = await db.query(
+              `SELECT public.update_teacher_assignment($1::uuid, $2::text, $3::text, $4::timestamptz, $5::integer) AS res;`,
+              [
+                body.p_assignment_id,
+                body.p_title,
+                body.p_instructions,
+                body.p_due_at,
+                body.p_expected_version ?? null,
+              ]
+            );
+            break;
+          case 'get_student_assignments':
+            q = await db.query(`SELECT public.get_student_assignments() AS res;`);
+            break;
+          case 'submit_student_assignment':
+            q = await db.query(
+              `SELECT public.submit_student_assignment($1::uuid, $2::text, $3::text, $4::text, $5::integer, $6::text, $7::integer) AS res;`,
+              [
+                body.p_assignment_id,
+                body.p_answer_text ?? null,
+                body.p_attachment_path ?? null,
+                body.p_attachment_name ?? null,
+                body.p_attachment_size ?? null,
+                body.p_attachment_mime_type ?? null,
+                body.p_expected_assignment_version ?? null,
+              ]
+            );
+            break;
+          case 'authorize_submission_attachment_download':
+            q = await db.query(
+              `SELECT public.authorize_submission_attachment_download($1::uuid) AS res;`,
+              [body.p_attachment_id]
+            );
+            break;
+          case 'get_teacher_assignment_submissions':
+            q = await db.query(
+              `SELECT public.get_teacher_assignment_submissions($1::uuid) AS res;`,
+              [body.p_assignment_id]
+            );
+            break;
+          case 'grade_assignment_submission':
+            q = await db.query(
+              `SELECT public.grade_assignment_submission($1::uuid, $2::numeric, $3::numeric, $4::integer) AS res;`,
+              [
+                body.p_submission_id,
+                body.p_score,
+                body.p_max_score,
+                body.p_expected_grade_version ?? null,
+              ]
+            );
+            break;
+          case 'get_group_chat_messages':
+            q = await db.query(`SELECT public.get_group_chat_messages($1::uuid) AS res;`, [body.p_group_id]);
+            break;
+          case 'send_group_chat_message':
+            q = await db.query(
+              `SELECT public.send_group_chat_message($1::uuid, $2::text) AS res;`,
+              [body.p_group_id, body.p_body]
+            );
             break;
           default:
             return { err: { status: 404, message: `Unknown RPC ${fn}` } };

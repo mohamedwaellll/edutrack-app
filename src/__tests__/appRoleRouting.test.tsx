@@ -2,6 +2,7 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
+import type { AuthChangeEvent, AuthError, Session, Subscription, User } from '@supabase/supabase-js';
 import App from '../App';
 import { supabase } from '../lib/supabaseClient';
 import * as supabaseClientModule from '../lib/supabaseClient';
@@ -9,6 +10,7 @@ import { adminService } from '../services/adminService';
 import { accountLinkingService } from '../services/accountLinkingService';
 import { teacherService } from '../services/teacherService';
 import { attendanceService } from '../services/attendanceService';
+import type { AttendanceRecord, GroupClass, Student, Teacher } from '../types';
 
 vi.mock('jsqr', () => ({
   default: vi.fn(() => ({ data: 'ET-QR-HASH-101' })),
@@ -21,10 +23,26 @@ global.ResizeObserver = class ResizeObserver {
   disconnect() {}
 };
 
+type ProfileLookupResponse = {
+  data: Record<string, unknown> | null;
+  error: { message: string } | null;
+};
+
+function makeTestSession(id: string, email: string, accessToken: string): Session {
+  return {
+    user: { id, email } as User,
+    access_token: accessToken,
+  } as Session;
+}
+
+function makeMockSubscription(): Subscription {
+  return { unsubscribe: vi.fn() } as unknown as Subscription;
+}
+
 function mockProfileLookup(
-  resolver: (userId: string) => Promise<{ data: any; error: any }>
+  resolver: (userId: string) => Promise<ProfileLookupResponse>
 ) {
-  vi.spyOn(supabase, 'from').mockImplementation((table: string): any => {
+  vi.spyOn(supabase, 'from').mockImplementation(((table: string) => {
     if (table === 'profiles') {
       return {
         select: () => ({
@@ -43,20 +61,20 @@ function mockProfileLookup(
         }),
       }),
     };
-  });
+  }) as unknown as typeof supabase.from);
 }
 
 describe('App Role Routing & Immediate Access Revocation (Stage B.3)', () => {
-  let authStateCallback: ((event: string, session: any) => void) | null = null;
+  let authStateCallback: ((event: AuthChangeEvent, session: Session | null) => void) | null = null;
 
   beforeEach(() => {
     vi.restoreAllMocks();
     authStateCallback = null;
     vi.spyOn(supabaseClientModule, 'isSupabaseConfigured').mockReturnValue(true);
-    vi.spyOn(supabase.auth, 'signOut').mockResolvedValue({ error: null } as any);
-    vi.spyOn(supabase.auth, 'onAuthStateChange').mockImplementation((cb: any) => {
+    vi.spyOn(supabase.auth, 'signOut').mockResolvedValue({ error: null });
+    vi.spyOn(supabase.auth, 'onAuthStateChange').mockImplementation((cb) => {
       authStateCallback = cb;
-      return { data: { subscription: { unsubscribe: vi.fn() } } } as any;
+      return { data: { subscription: makeMockSubscription() } };
     });
   });
 
@@ -81,9 +99,9 @@ describe('App Role Routing & Immediate Access Revocation (Stage B.3)', () => {
     for (const tc of roleCases) {
       vi.clearAllMocks();
       vi.spyOn(supabaseClientModule, 'isSupabaseConfigured').mockReturnValue(true);
-      vi.spyOn(supabase.auth, 'onAuthStateChange').mockImplementation((cb: any) => {
+      vi.spyOn(supabase.auth, 'onAuthStateChange').mockImplementation((cb) => {
         authStateCallback = cb;
-        return { data: { subscription: { unsubscribe: vi.fn() } } } as any;
+        return { data: { subscription: makeMockSubscription() } };
       });
 
       const getOverviewSpy = vi.spyOn(adminService, 'getDashboardOverview');
@@ -94,7 +112,7 @@ describe('App Role Routing & Immediate Access Revocation (Stage B.3)', () => {
       const getParentStudentLinksSpy = vi.spyOn(accountLinkingService, 'getParentStudentLinks');
 
       vi.spyOn(supabase.auth, 'getSession').mockResolvedValue({
-        data: { session: { user: { id: tc.id, email: `${tc.role}@edutrack.com` }, access_token: 'tok' } as any },
+        data: { session: makeTestSession(tc.id, `${tc.role}@edutrack.com`, 'tok') },
         error: null,
       });
 
@@ -151,10 +169,10 @@ describe('App Role Routing & Immediate Access Revocation (Stage B.3)', () => {
     for (const tc of loginRoles) {
       vi.clearAllMocks();
       vi.spyOn(supabaseClientModule, 'isSupabaseConfigured').mockReturnValue(true);
-      vi.spyOn(supabase.auth, 'signOut').mockResolvedValue({ error: null } as any);
-      vi.spyOn(supabase.auth, 'onAuthStateChange').mockImplementation((cb: any) => {
+      vi.spyOn(supabase.auth, 'signOut').mockResolvedValue({ error: null });
+      vi.spyOn(supabase.auth, 'onAuthStateChange').mockImplementation((cb) => {
         authStateCallback = cb;
-        return { data: { subscription: { unsubscribe: vi.fn() } } } as any;
+        return { data: { subscription: makeMockSubscription() } };
       });
       vi.spyOn(supabase.auth, 'getSession').mockResolvedValue({
         data: { session: null },
@@ -163,11 +181,8 @@ describe('App Role Routing & Immediate Access Revocation (Stage B.3)', () => {
 
       vi.spyOn(supabase.auth, 'signInWithPassword').mockResolvedValue({
         data: {
-          user: { id: tc.id, email: `${tc.role}@edutrack.com` } as any,
-          session: {
-            user: { id: tc.id, email: `${tc.role}@edutrack.com` },
-            access_token: `tok-${tc.role}`,
-          } as any,
+          user: { id: tc.id, email: `${tc.role}@edutrack.com` } as User,
+          session: makeTestSession(tc.id, `${tc.role}@edutrack.com`, `tok-${tc.role}`),
         },
         error: null,
       });
@@ -194,7 +209,7 @@ describe('App Role Routing & Immediate Access Revocation (Stage B.3)', () => {
       fireEvent.change(screen.getByLabelText(/Email address/i), {
         target: { value: `${tc.role}@edutrack.com` },
       });
-      fireEvent.change(screen.getByLabelText(/Password/i), {
+      fireEvent.change(screen.getByLabelText(/^Password$/i), {
         target: { value: 'SecretPass123!' },
       });
       fireEvent.click(screen.getByRole('button', { name: /Sign In to EduTrack/i }));
@@ -219,8 +234,8 @@ describe('App Role Routing & Immediate Access Revocation (Stage B.3)', () => {
   });
 
   it('2. Switching from admin (with active preview) to student immediately hides AdminDashboard & preview before student profile resolves', async () => {
-    let resolveStudentProfile: (val: { data: any; error: any }) => void;
-    const studentProfilePromise = new Promise<{ data: any; error: any }>((resolve) => {
+    let resolveStudentProfile: (val: ProfileLookupResponse) => void;
+    const studentProfilePromise = new Promise<ProfileLookupResponse>((resolve) => {
       resolveStudentProfile = resolve;
     });
 
@@ -231,10 +246,7 @@ describe('App Role Routing & Immediate Access Revocation (Stage B.3)', () => {
 
     vi.spyOn(supabase.auth, 'getSession').mockResolvedValue({
       data: {
-        session: {
-          user: { id: 'admin-1', email: 'admin@edutrack.com' },
-          access_token: 'admin-tok',
-        } as any,
+        session: makeTestSession('admin-1', 'admin@edutrack.com', 'admin-tok'),
       },
       error: null,
     });
@@ -270,10 +282,7 @@ describe('App Role Routing & Immediate Access Revocation (Stage B.3)', () => {
 
     // Switch session to student while student profile fetch is still pending
     await act(async () => {
-      authStateCallback?.('SIGNED_IN', {
-        user: { id: 'student-2', email: 'student@edutrack.com' },
-        access_token: 'student-tok',
-      });
+      authStateCallback?.('SIGNED_IN', makeTestSession('student-2', 'student@edutrack.com', 'student-tok'));
     });
 
     // AdminDashboard and preview MUST vanish immediately while verifying
@@ -305,8 +314,9 @@ describe('App Role Routing & Immediate Access Revocation (Stage B.3)', () => {
   });
 
   it('3. Ignores delayed initial getSession() and delayed profile responses arriving after newer login or sign-out', async () => {
-    let resolveDelayedGetSession: (val: any) => void;
-    const delayedGetSessionPromise = new Promise<any>((resolve) => {
+    type GetSessionResult = Awaited<ReturnType<typeof supabase.auth.getSession>>;
+    let resolveDelayedGetSession: (val: GetSessionResult) => void;
+    const delayedGetSessionPromise = new Promise<GetSessionResult>((resolve) => {
       resolveDelayedGetSession = resolve;
     });
 
@@ -329,10 +339,7 @@ describe('App Role Routing & Immediate Access Revocation (Stage B.3)', () => {
 
     // While initial getSession() is still pending, user logs in as teacher via auth event
     await act(async () => {
-      authStateCallback?.('SIGNED_IN', {
-        user: { id: 'teacher-new', email: 't@edutrack.com' },
-        access_token: 'teacher-tok',
-      });
+      authStateCallback?.('SIGNED_IN', makeTestSession('teacher-new', 't@edutrack.com', 'teacher-tok'));
     });
 
     await waitFor(() => {
@@ -343,7 +350,7 @@ describe('App Role Routing & Immediate Access Revocation (Stage B.3)', () => {
     await act(async () => {
       resolveDelayedGetSession!({
         data: {
-          session: { user: { id: 'admin-stale', email: 'stale@edutrack.com' }, access_token: 'old-tok' },
+          session: makeTestSession('admin-stale', 'stale@edutrack.com', 'old-tok'),
         },
         error: null,
       });
@@ -353,7 +360,7 @@ describe('App Role Routing & Immediate Access Revocation (Stage B.3)', () => {
     expect(screen.queryByText('EduTrack Admin')).toBeNull();
 
     // Now test sign-out during an in-flight profile fetch: never reopen dashboard after sign-out
-    let resolveLateAdminProfile: (val: { data: any; error: any }) => void;
+    let resolveLateAdminProfile: (val: ProfileLookupResponse) => void;
     mockProfileLookup(
       () =>
         new Promise((resolve) => {
@@ -362,10 +369,7 @@ describe('App Role Routing & Immediate Access Revocation (Stage B.3)', () => {
     );
 
     await act(async () => {
-      authStateCallback?.('SIGNED_IN', {
-        user: { id: 'admin-late', email: 'late@edutrack.com' },
-        access_token: 'late-tok',
-      });
+      authStateCallback?.('SIGNED_IN', makeTestSession('admin-late', 'late@edutrack.com', 'late-tok'));
     });
 
     expect(screen.getByText('Restoring authenticated session...')).toBeDefined();
@@ -395,7 +399,7 @@ describe('App Role Routing & Immediate Access Revocation (Stage B.3)', () => {
 
     vi.spyOn(supabase.auth, 'getSession').mockResolvedValue({
       data: {
-        session: { user: { id: 'user-recover', email: 'u@edutrack.com' }, access_token: 'tok' } as any,
+        session: makeTestSession('user-recover', 'u@edutrack.com', 'tok'),
       },
       error: null,
     });
@@ -459,7 +463,7 @@ describe('App Role Routing & Immediate Access Revocation (Stage B.3)', () => {
 
   it('5. Same-user TOKEN_REFRESHED & duplicate SIGNED_IN preserve Add Teacher draft/tab while locking saves during verification', async () => {
     let profileFetchCount = 0;
-    let resolveRefreshProfile: (val: { data: any; error: any }) => void;
+    let resolveRefreshProfile: (val: ProfileLookupResponse) => void;
 
     const createTeacherSpy = vi.spyOn(adminService, 'createTeacher').mockResolvedValue({
       data: {
@@ -477,10 +481,7 @@ describe('App Role Routing & Immediate Access Revocation (Stage B.3)', () => {
 
     vi.spyOn(supabase.auth, 'getSession').mockResolvedValue({
       data: {
-        session: {
-          user: { id: 'admin-draft', email: 'admin@edutrack.com' },
-          access_token: 'tok-1',
-        } as any,
+        session: makeTestSession('admin-draft', 'admin@edutrack.com', 'tok-1'),
       },
       error: null,
     });
@@ -520,10 +521,7 @@ describe('App Role Routing & Immediate Access Revocation (Stage B.3)', () => {
 
     // Trigger TOKEN_REFRESHED for the same verified admin
     await act(async () => {
-      authStateCallback?.('TOKEN_REFRESHED', {
-        user: { id: 'admin-draft', email: 'admin@edutrack.com' },
-        access_token: 'tok-2',
-      });
+      authStateCallback?.('TOKEN_REFRESHED', makeTestSession('admin-draft', 'admin@edutrack.com', 'tok-2'));
     });
 
     // Active tab, modal, and typed draft remain intact while protected save is blocked during verification
@@ -555,10 +553,7 @@ describe('App Role Routing & Immediate Access Revocation (Stage B.3)', () => {
 
     // Also test duplicate SIGNED_IN for same verified user preserves draft identically
     await act(async () => {
-      authStateCallback?.('SIGNED_IN', {
-        user: { id: 'admin-draft', email: 'admin@edutrack.com' },
-        access_token: 'tok-3',
-      });
+      authStateCallback?.('SIGNED_IN', makeTestSession('admin-draft', 'admin@edutrack.com', 'tok-3'));
     });
     expect(screen.getByTestId('session-revalidating-banner')).toBeDefined();
     await act(async () => {
@@ -576,14 +571,11 @@ describe('App Role Routing & Immediate Access Revocation (Stage B.3)', () => {
 
   it('6. TOKEN_REFRESHED revealing role demotion or profile error immediately revokes AdminDashboard', async () => {
     let phase: 'admin' | 'student' | 'error' = 'admin';
-    let resolveDelayed: ((val: { data: any; error: any }) => void) | null = null;
+    let resolveDelayed: ((val: ProfileLookupResponse) => void) | null = null;
 
     vi.spyOn(supabase.auth, 'getSession').mockResolvedValue({
       data: {
-        session: {
-          user: { id: 'admin-revoked', email: 'admin@edutrack.com' },
-          access_token: 'tok-1',
-        } as any,
+        session: makeTestSession('admin-revoked', 'admin@edutrack.com', 'tok-1'),
       },
       error: null,
     });
@@ -609,10 +601,7 @@ describe('App Role Routing & Immediate Access Revocation (Stage B.3)', () => {
     // Trigger refresh whose delayed response reveals role changed to student
     phase = 'student';
     await act(async () => {
-      authStateCallback?.('TOKEN_REFRESHED', {
-        user: { id: 'admin-revoked', email: 'admin@edutrack.com' },
-        access_token: 'tok-2',
-      });
+      authStateCallback?.('TOKEN_REFRESHED', makeTestSession('admin-revoked', 'admin@edutrack.com', 'tok-2'));
     });
 
     await act(async () => {
@@ -640,10 +629,7 @@ describe('App Role Routing & Immediate Access Revocation (Stage B.3)', () => {
 
     phase = 'error';
     await act(async () => {
-      authStateCallback?.('TOKEN_REFRESHED', {
-        user: { id: 'admin-revoked', email: 'admin@edutrack.com' },
-        access_token: 'tok-3',
-      });
+      authStateCallback?.('TOKEN_REFRESHED', makeTestSession('admin-revoked', 'admin@edutrack.com', 'tok-3'));
     });
 
     await act(async () => {
@@ -660,16 +646,13 @@ describe('App Role Routing & Immediate Access Revocation (Stage B.3)', () => {
   });
 
   it('7. Switching accounts while same-user TOKEN_REFRESHED is pending immediately hides first account and ignores stale refresh', async () => {
-    let resolveAdminRefresh: (val: { data: any; error: any }) => void;
-    let resolveStudentProfile: (val: { data: any; error: any }) => void;
+    let resolveAdminRefresh: (val: ProfileLookupResponse) => void;
+    let resolveStudentProfile: (val: ProfileLookupResponse) => void;
     let adminFetchCalls = 0;
 
     vi.spyOn(supabase.auth, 'getSession').mockResolvedValue({
       data: {
-        session: {
-          user: { id: 'admin-switch-1', email: 'admin1@edutrack.com' },
-          access_token: 'tok-a1',
-        } as any,
+        session: makeTestSession('admin-switch-1', 'admin1@edutrack.com', 'tok-a1'),
       },
       error: null,
     });
@@ -700,19 +683,13 @@ describe('App Role Routing & Immediate Access Revocation (Stage B.3)', () => {
 
     // Start TOKEN_REFRESHED for admin-switch-1 (stays pending)
     await act(async () => {
-      authStateCallback?.('TOKEN_REFRESHED', {
-        user: { id: 'admin-switch-1', email: 'admin1@edutrack.com' },
-        access_token: 'tok-a2',
-      });
+      authStateCallback?.('TOKEN_REFRESHED', makeTestSession('admin-switch-1', 'admin1@edutrack.com', 'tok-a2'));
     });
     expect(screen.getByTestId('session-revalidating-banner')).toBeDefined();
 
     // Switch to student-switch-2 BEFORE admin refresh finishes -> AdminDashboard must disappear IMMEDIATELY
     await act(async () => {
-      authStateCallback?.('SIGNED_IN', {
-        user: { id: 'student-switch-2', email: 'student2@edutrack.com' },
-        access_token: 'tok-s2',
-      });
+      authStateCallback?.('SIGNED_IN', makeTestSession('student-switch-2', 'student2@edutrack.com', 'tok-s2'));
     });
 
     expect(screen.queryByText('EduTrack Admin')).toBeNull();
@@ -745,15 +722,12 @@ describe('App Role Routing & Immediate Access Revocation (Stage B.3)', () => {
   });
 
   it('8. Sign Out failures ({ error } and rejected Promise) lock protected UI, block stale responses, and recover on Retry Sign Out', async () => {
-    let resolvePendingRefresh: ((val: { data: any; error: any }) => void) | null = null;
+    let resolvePendingRefresh: ((val: ProfileLookupResponse) => void) | null = null;
     let adminProfileCalls = 0;
 
     vi.spyOn(supabase.auth, 'getSession').mockResolvedValue({
       data: {
-        session: {
-          user: { id: 'admin-signout-1', email: 'admin@edutrack.com' },
-          access_token: 'tok-1',
-        } as any,
+        session: makeTestSession('admin-signout-1', 'admin@edutrack.com', 'tok-1'),
       },
       error: null,
     });
@@ -774,7 +748,7 @@ describe('App Role Routing & Immediate Access Revocation (Stage B.3)', () => {
     // Case A: signOut resolves with { error } first, then succeeds on Retry
     const signOutSpy = vi
       .spyOn(supabase.auth, 'signOut')
-      .mockResolvedValueOnce({ error: { message: 'Logout endpoint unavailable' } as any })
+      .mockResolvedValueOnce({ error: { message: 'Logout endpoint unavailable' } as AuthError })
       .mockResolvedValueOnce({ error: null });
 
     const { unmount } = render(<App />);
@@ -785,10 +759,7 @@ describe('App Role Routing & Immediate Access Revocation (Stage B.3)', () => {
 
     // Trigger background refresh that remains pending when user clicks Sign Out
     await act(async () => {
-      authStateCallback?.('TOKEN_REFRESHED', {
-        user: { id: 'admin-signout-1', email: 'admin@edutrack.com' },
-        access_token: 'tok-refresh',
-      });
+      authStateCallback?.('TOKEN_REFRESHED', makeTestSession('admin-signout-1', 'admin@edutrack.com', 'tok-refresh'));
     });
 
     await act(async () => {
@@ -864,18 +835,18 @@ describe('App Role Routing & Immediate Access Revocation (Stage B.3)', () => {
 
   it('9. Blocks grade & feedback writes during isRevalidating, preserves drafts across refresh, and submits once explicitly after verification', async () => {
     let profileFetchCount = 0;
-    let resolveRefreshProfile: (val: { data: any; error: any }) => void;
+    let resolveRefreshProfile: (val: ProfileLookupResponse) => void;
 
     vi.spyOn(adminService, 'getClasses').mockResolvedValue({
-      data: [{ id: 'grp-1', name: 'Grade 8A', grade_level: 'Grade 8', subject: 'Physics', room: 'Lab 1' } as any],
+      data: [{ id: 'grp-1', name: 'Grade 8A', grade_level: 'Grade 8', subject: 'Physics', room: 'Lab 1' } as unknown as GroupClass],
       error: null,
     });
     vi.spyOn(adminService, 'getStudents').mockResolvedValue({
-      data: [{ id: 'stu-1', full_name: 'Salma Ali', student_code: 'S-101', group_id: 'grp-1', grade_level: 'Grade 8', status: 'active' } as any],
+      data: [{ id: 'stu-1', full_name: 'Salma Ali', student_code: 'S-101', group_id: 'grp-1', grade_level: 'Grade 8', status: 'active' } as unknown as Student],
       error: null,
     });
     vi.spyOn(adminService, 'getTeachers').mockResolvedValue({
-      data: [{ id: 'tch-1', full_name: 'Dr. Omar', subject: 'Physics', email: 'omar@edutrack.com' } as any],
+      data: [{ id: 'tch-1', full_name: 'Dr. Omar', subject: 'Physics', email: 'omar@edutrack.com' } as unknown as Teacher],
       error: null,
     });
     vi.spyOn(teacherService, 'getGrades').mockResolvedValue({ data: [], error: null });
@@ -913,7 +884,7 @@ describe('App Role Routing & Immediate Access Revocation (Stage B.3)', () => {
 
     vi.spyOn(supabase.auth, 'getSession').mockResolvedValue({
       data: {
-        session: { user: { id: 'admin-gf-1', email: 'admin@edutrack.com' }, access_token: 'tok-1' } as any,
+        session: makeTestSession('admin-gf-1', 'admin@edutrack.com', 'tok-1'),
       },
       error: null,
     });
@@ -951,10 +922,7 @@ describe('App Role Routing & Immediate Access Revocation (Stage B.3)', () => {
 
     // Start TOKEN_REFRESHED revalidation while grade draft is open
     await act(async () => {
-      authStateCallback?.('TOKEN_REFRESHED', {
-        user: { id: 'admin-gf-1', email: 'admin@edutrack.com' },
-        access_token: 'tok-2',
-      });
+      authStateCallback?.('TOKEN_REFRESHED', makeTestSession('admin-gf-1', 'admin@edutrack.com', 'tok-2'));
     });
 
     expect(screen.getByTestId('teacher-revalidating-banner')).toBeDefined();
@@ -988,10 +956,7 @@ describe('App Role Routing & Immediate Access Revocation (Stage B.3)', () => {
     fireEvent.change(screen.getByLabelText(/Feedback text/i), { target: { value: 'Strong lab progress' } });
 
     await act(async () => {
-      authStateCallback?.('SIGNED_IN', {
-        user: { id: 'admin-gf-1', email: 'admin@edutrack.com' },
-        access_token: 'tok-3',
-      });
+      authStateCallback?.('SIGNED_IN', makeTestSession('admin-gf-1', 'admin@edutrack.com', 'tok-3'));
     });
 
     expect(screen.getByTestId('teacher-revalidating-banner')).toBeDefined();
@@ -1020,9 +985,9 @@ describe('App Role Routing & Immediate Access Revocation (Stage B.3)', () => {
 
   it('10. Blocks AttendanceQRScanner writes across camera, async image decode started before refresh, and manual scan without queueing', async () => {
     let profileFetchCount = 0;
-    let resolveRefreshProfile: (val: { data: any; error: any }) => void;
+    let resolveRefreshProfile: (val: ProfileLookupResponse) => void;
     let pendingImgOnload: (() => void) | null = null;
-    let getUserMediaResolve: ((stream: any) => void) | null = null;
+    let getUserMediaResolve: ((stream: MediaStream) => void) | null = null;
     const mockTrack = { stop: vi.fn(), readyState: 'live' };
 
     const originalFileReader = global.FileReader;
@@ -1046,28 +1011,33 @@ describe('App Role Routing & Immediate Access Revocation (Stage B.3)', () => {
       }
     }
 
-    (global as any).FileReader = DeferredFileReader;
-    (global as any).Image = DeferredImage;
+    const globalWithConstructors = global as unknown as {
+      FileReader: typeof FileReader;
+      Image: typeof Image;
+    };
+    globalWithConstructors.FileReader = DeferredFileReader as unknown as typeof FileReader;
+    globalWithConstructors.Image = DeferredImage as unknown as typeof Image;
     HTMLCanvasElement.prototype.getContext = vi.fn(() => ({
       drawImage: vi.fn(),
       getImageData: vi.fn(() => ({ data: new Uint8ClampedArray(4), width: 1, height: 1 })),
-    })) as any;
+    })) as unknown as typeof HTMLCanvasElement.prototype.getContext;
+    const getUserMediaMock = vi.fn(
+      () =>
+        new Promise<MediaStream>((resolve) => {
+          getUserMediaResolve = resolve;
+        })
+    );
     Object.defineProperty(global.navigator, 'mediaDevices', {
       writable: true,
       configurable: true,
       value: {
-        getUserMedia: vi.fn(
-          () =>
-            new Promise((resolve) => {
-              getUserMediaResolve = resolve;
-            })
-        ),
+        getUserMedia: getUserMediaMock,
       },
     });
 
     try {
       vi.spyOn(adminService, 'getClasses').mockResolvedValue({
-        data: [{ id: 'grp-qr-1', name: 'Math QR', grade_level: 'Grade 9', subject: 'Math', room: '102' } as any],
+        data: [{ id: 'grp-qr-1', name: 'Math QR', grade_level: 'Grade 9', subject: 'Math', room: '102' } as unknown as GroupClass],
         error: null,
       });
       const recordQRSpy = vi.spyOn(attendanceService, 'recordQRAttendance').mockResolvedValue({
@@ -1085,14 +1055,14 @@ describe('App Role Routing & Immediate Access Revocation (Stage B.3)', () => {
             scan_method: 'qr_scan',
             student_name: 'Omar',
             student_code: 'S-01',
-          } as any,
+          } as unknown as AttendanceRecord,
         },
         error: null,
       });
 
       vi.spyOn(supabase.auth, 'getSession').mockResolvedValue({
         data: {
-          session: { user: { id: 'admin-qr-1', email: 'admin@edutrack.com' }, access_token: 'tok-1' } as any,
+          session: makeTestSession('admin-qr-1', 'admin@edutrack.com', 'tok-1'),
         },
         error: null,
       });
@@ -1126,17 +1096,17 @@ describe('App Role Routing & Immediate Access Revocation (Stage B.3)', () => {
       const rAFSpy = vi.spyOn(window, 'requestAnimationFrame');
       const playOriginal = HTMLMediaElement.prototype.play;
       HTMLMediaElement.prototype.play = vi.fn().mockResolvedValue(undefined);
-      let resolveCameraFrameStream: ((stream: any) => void) | null = null;
-      (global.navigator.mediaDevices.getUserMedia as any).mockImplementationOnce(
+      let resolveCameraFrameStream: ((stream: MediaStream) => void) | null = null;
+      getUserMediaMock.mockImplementationOnce(
         () =>
-          new Promise((resolve) => {
+          new Promise<MediaStream>((resolve) => {
             resolveCameraFrameStream = resolve;
           })
       );
 
       fireEvent.click(screen.getByRole('button', { name: /Start Camera/i }));
       await act(async () => {
-        resolveCameraFrameStream?.({ getTracks: () => [mockTrack] });
+        resolveCameraFrameStream?.({ getTracks: () => [mockTrack] } as unknown as MediaStream);
       });
       await waitFor(() => {
         expect(screen.getByRole('button', { name: /Stop Camera/i })).toBeDefined();
@@ -1149,10 +1119,7 @@ describe('App Role Routing & Immediate Access Revocation (Stage B.3)', () => {
 
       // Start TOKEN_REFRESHED while camera is STILL live and fire the queued frame during revalidation
       await act(async () => {
-        authStateCallback?.('TOKEN_REFRESHED', {
-          user: { id: 'admin-qr-1', email: 'admin@edutrack.com' },
-          access_token: 'tok-2a',
-        });
+        authStateCallback?.('TOKEN_REFRESHED', makeTestSession('admin-qr-1', 'admin@edutrack.com', 'tok-2a'));
       });
       expect(screen.getByTestId('qr-revalidating-banner')).toBeDefined();
       await act(async () => {
@@ -1186,16 +1153,13 @@ describe('App Role Routing & Immediate Access Revocation (Stage B.3)', () => {
       fireEvent.click(screen.getByRole('button', { name: /Start Camera/i }));
 
       await act(async () => {
-        authStateCallback?.('TOKEN_REFRESHED', {
-          user: { id: 'admin-qr-1', email: 'admin@edutrack.com' },
-          access_token: 'tok-2b',
-        });
+        authStateCallback?.('TOKEN_REFRESHED', makeTestSession('admin-qr-1', 'admin@edutrack.com', 'tok-2b'));
       });
       expect(screen.getByTestId('qr-revalidating-banner')).toBeDefined();
 
       // 1) In-flight camera stream resolves during revalidation -> stopped, 0 QR writes
       await act(async () => {
-        getUserMediaResolve?.({ getTracks: () => [mockTrack] });
+        getUserMediaResolve?.({ getTracks: () => [mockTrack] } as unknown as MediaStream);
       });
       expect(mockTrack.stop).toHaveBeenCalled();
       expect(recordQRSpy).not.toHaveBeenCalled();
@@ -1239,8 +1203,8 @@ describe('App Role Routing & Immediate Access Revocation (Stage B.3)', () => {
         expect(recordQRSpy).toHaveBeenCalledWith('ET-QR-HASH-101', 'grp-qr-1');
       });
     } finally {
-      (global as any).FileReader = originalFileReader;
-      (global as any).Image = originalImage;
+      globalWithConstructors.FileReader = originalFileReader;
+      globalWithConstructors.Image = originalImage;
       HTMLCanvasElement.prototype.getContext = originalGetContext;
       Object.defineProperty(global.navigator, 'mediaDevices', {
         writable: true,
@@ -1251,14 +1215,15 @@ describe('App Role Routing & Immediate Access Revocation (Stage B.3)', () => {
   });
 
   it('11. Ignores duplicate SIGNED_IN for outgoing user during signing_out & signout_error, allows Retry Sign Out, then normal login afterwards', async () => {
-    let resolvePendingSignOut: (val: any) => void;
-    const pendingSignOutPromise = new Promise((resolve) => {
+    type SignOutResult = Awaited<ReturnType<typeof supabase.auth.signOut>>;
+    let resolvePendingSignOut: (val: SignOutResult) => void;
+    const pendingSignOutPromise = new Promise<SignOutResult>((resolve) => {
       resolvePendingSignOut = resolve;
     });
 
     vi.spyOn(supabase.auth, 'getSession').mockResolvedValue({
       data: {
-        session: { user: { id: 'admin-out-1', email: 'admin@edutrack.com' }, access_token: 'tok-1' } as any,
+        session: makeTestSession('admin-out-1', 'admin@edutrack.com', 'tok-1'),
       },
       error: null,
     });
@@ -1273,7 +1238,7 @@ describe('App Role Routing & Immediate Access Revocation (Stage B.3)', () => {
 
     const signOutSpy = vi
       .spyOn(supabase.auth, 'signOut')
-      .mockReturnValueOnce(pendingSignOutPromise as any)
+      .mockReturnValueOnce(pendingSignOutPromise)
       .mockResolvedValueOnce({ error: null });
 
     render(<App />);
@@ -1295,10 +1260,7 @@ describe('App Role Routing & Immediate Access Revocation (Stage B.3)', () => {
 
     // Duplicate SIGNED_IN arrives for the SAME outgoing account during signing_out -> MUST BE IGNORED
     await act(async () => {
-      authStateCallback?.('SIGNED_IN', {
-        user: { id: 'admin-out-1', email: 'admin@edutrack.com' },
-        access_token: 'tok-dup-1',
-      });
+      authStateCallback?.('SIGNED_IN', makeTestSession('admin-out-1', 'admin@edutrack.com', 'tok-dup-1'));
     });
 
     expect(screen.getByTestId('signing-out-screen')).toBeDefined();
@@ -1308,7 +1270,7 @@ describe('App Role Routing & Immediate Access Revocation (Stage B.3)', () => {
 
     // Pending signOut returns { error } -> lands on signout_error screen
     await act(async () => {
-      resolvePendingSignOut!({ error: { message: 'Session revoke timeout' } });
+      resolvePendingSignOut!({ error: { message: 'Session revoke timeout' } as AuthError });
     });
 
     await waitFor(() => {
@@ -1318,10 +1280,7 @@ describe('App Role Routing & Immediate Access Revocation (Stage B.3)', () => {
 
     // Duplicate SIGNED_IN arrives for SAME outgoing account during signout_error -> STILL IGNORED
     await act(async () => {
-      authStateCallback?.('SIGNED_IN', {
-        user: { id: 'admin-out-1', email: 'admin@edutrack.com' },
-        access_token: 'tok-dup-2',
-      });
+      authStateCallback?.('SIGNED_IN', makeTestSession('admin-out-1', 'admin@edutrack.com', 'tok-dup-2'));
     });
 
     expect(screen.getByTestId('signout-error-screen')).toBeDefined();
@@ -1342,11 +1301,8 @@ describe('App Role Routing & Immediate Access Revocation (Stage B.3)', () => {
     // Normal sign-in with that same account works cleanly after completed sign-out
     vi.spyOn(supabase.auth, 'signInWithPassword').mockResolvedValueOnce({
       data: {
-        user: { id: 'admin-out-1', email: 'admin@edutrack.com' } as any,
-        session: {
-          user: { id: 'admin-out-1', email: 'admin@edutrack.com' },
-          access_token: 'tok-fresh-login',
-        } as any,
+        user: { id: 'admin-out-1', email: 'admin@edutrack.com' } as User,
+        session: makeTestSession('admin-out-1', 'admin@edutrack.com', 'tok-fresh-login'),
       },
       error: null,
     });
@@ -1354,7 +1310,7 @@ describe('App Role Routing & Immediate Access Revocation (Stage B.3)', () => {
     fireEvent.change(screen.getByLabelText(/Email address/i), {
       target: { value: 'admin@edutrack.com' },
     });
-    fireEvent.change(screen.getByLabelText(/Password/i), {
+    fireEvent.change(screen.getByLabelText(/^Password$/i), {
       target: { value: 'SecretPass123!' },
     });
     fireEvent.click(screen.getByRole('button', { name: /Sign In to EduTrack/i }));
@@ -1362,5 +1318,94 @@ describe('App Role Routing & Immediate Access Revocation (Stage B.3)', () => {
     await waitFor(() => {
       expect(screen.getByText('EduTrack Admin')).toBeDefined();
     });
+  });
+
+  it('12. Preserves admin QR preview across same-session TOKEN_REFRESHED, but resets to main AdminDashboard after sign-out and same-admin re-login', async () => {
+    let profileCalls = 0;
+    let resolveRefreshProfile: ((val: ProfileLookupResponse) => void) | null = null;
+
+    vi.spyOn(supabase.auth, 'getSession').mockResolvedValue({
+      data: {
+        session: makeTestSession('admin-qr-session', 'admin@edutrack.com', 'tok-session-1'),
+      },
+      error: null,
+    });
+
+    mockProfileLookup((uid) => {
+      profileCalls++;
+      if (profileCalls === 2) {
+        return new Promise<ProfileLookupResponse>((resolve) => {
+          resolveRefreshProfile = resolve;
+        });
+      }
+      return Promise.resolve({
+        data: { id: uid, email: 'admin@edutrack.com', role: 'admin', full_name: 'Admin Session' },
+        error: null,
+      });
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByText('EduTrack Admin')).toBeDefined();
+    });
+
+    // Open QR Cards preview from admin session #1
+    fireEvent.click(screen.getByRole('button', { name: /^QR Cards$/i }));
+    await waitFor(() => {
+      expect(screen.getByText(/StudentCardsPrintPage/i)).toBeDefined();
+    });
+    expect(screen.queryByText('EduTrack Admin')).toBeNull();
+
+    // Successful same-user TOKEN_REFRESHED within the SAME session MUST preserve QR preview
+    await act(async () => {
+      authStateCallback?.('TOKEN_REFRESHED', makeTestSession('admin-qr-session', 'admin@edutrack.com', 'tok-session-1-refreshed'));
+    });
+
+    expect(screen.getByText(/StudentCardsPrintPage/i)).toBeDefined();
+
+    await act(async () => {
+      resolveRefreshProfile?.({
+        data: { id: 'admin-qr-session', email: 'admin@edutrack.com', role: 'admin', full_name: 'Admin Session' },
+        error: null,
+      });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText(/StudentCardsPrintPage/i)).toBeDefined();
+    });
+    expect(screen.queryByText('EduTrack Admin')).toBeNull();
+
+    // Sign out from session #1 while QR preview is open
+    await act(async () => {
+      authStateCallback?.('SIGNED_OUT', null);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('Sign In to EduTrack')).toBeDefined();
+    });
+    expect(screen.queryByText(/StudentCardsPrintPage/i)).toBeNull();
+
+    // Sign back in as the SAME admin account (new session #2) -> main AdminDashboard MUST appear, NOT stale QR preview
+    vi.spyOn(supabase.auth, 'signInWithPassword').mockResolvedValueOnce({
+      data: {
+        user: { id: 'admin-qr-session', email: 'admin@edutrack.com' } as User,
+        session: makeTestSession('admin-qr-session', 'admin@edutrack.com', 'tok-session-2'),
+      },
+      error: null,
+    });
+
+    fireEvent.change(screen.getByLabelText(/Email address/i), {
+      target: { value: 'admin@edutrack.com' },
+    });
+    fireEvent.change(screen.getByLabelText(/^Password$/i), {
+      target: { value: 'SecretPass123!' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Sign In to EduTrack/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText('EduTrack Admin')).toBeDefined();
+    });
+    expect(screen.queryByText(/StudentCardsPrintPage/i)).toBeNull();
   });
 });

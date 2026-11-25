@@ -1,22 +1,28 @@
 import React from 'react';
 import { ShieldAlert, LogOut, UserX, AlertTriangle, RefreshCw } from 'lucide-react';
-import { useAuth } from '../contexts/AuthContext';
+import { useAuth } from '../contexts/authState';
+import { usePreferences } from '../contexts/preferencesState';
+import { translateRole } from '../i18n/translations';
+import { DisplayControls } from './DisplayControls';
 
 export const AccessDenied: React.FC = () => {
   const { user, profile, role, status, error, signOut, refreshProfile, loading } = useAuth();
+  const { language, t } = usePreferences();
 
   const isMissingProfile = status === 'missing_profile';
   const isProfileError = status === 'profile_error';
   const isUnknownRole = status === 'unknown_role';
 
   return (
-    <div className="min-h-screen bg-[#0B1024] text-white flex items-center justify-center p-6 relative overflow-hidden font-sans">
-      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] rounded-full bg-rose-600/10 blur-[130px] pointer-events-none" />
+    <div className="min-h-screen bg-[#F8F7F2] dark:bg-[#0B121B] text-[#26334A] dark:text-slate-100 flex items-center justify-center p-6 relative overflow-hidden font-sans">
+      <div className="absolute top-5 end-5 z-20">
+        <DisplayControls variant="surface" />
+      </div>
 
-      <div className="max-w-md w-full bg-[#171638]/90 border border-rose-500/30 rounded-3xl p-8 text-center shadow-2xl relative z-10">
-        <div className="w-16 h-16 rounded-2xl bg-rose-500/10 border border-rose-500/20 text-rose-400 flex items-center justify-center mx-auto mb-5">
+      <div className="max-w-md w-full bg-white dark:bg-[#131E2B] border border-rose-200 dark:border-rose-700/50 rounded-2xl p-8 text-center shadow-lg relative z-10">
+        <div className="w-16 h-16 rounded-2xl bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-700/50 text-rose-600 dark:text-rose-400 flex items-center justify-center mx-auto mb-5">
           {isProfileError ? (
-            <AlertTriangle className="w-8 h-8 text-amber-400" />
+            <AlertTriangle className="w-8 h-8 text-amber-600 dark:text-amber-400" />
           ) : isMissingProfile ? (
             <UserX className="w-8 h-8" />
           ) : (
@@ -24,30 +30,42 @@ export const AccessDenied: React.FC = () => {
           )}
         </div>
 
-        <h2 className="text-2xl font-black text-white tracking-tight mb-2">
+        <h2 className="text-2xl font-extrabold text-[#17213B] dark:text-white tracking-tight mb-2">
           {isProfileError
-            ? 'Profile Verification Error'
+            ? t('accessProfileErrorTitle')
             : isMissingProfile
-            ? 'Profile Record Missing'
+            ? t('accessMissingProfileTitle')
             : isUnknownRole
-            ? 'Unrecognized Account Role'
-            : 'Access Restricted'}
+            ? t('accessUnknownRoleTitle')
+            : t('accessRestrictedTitle')}
         </h2>
 
-        <p className="text-xs text-[#C7B8ED] leading-relaxed mb-6">
+        <p className="text-xs text-[#64748B] dark:text-slate-300 leading-relaxed mb-6">
           {isProfileError ? (
-            <>
-              {error || 'Unable to verify your account permissions due to a network or database failure. Protected screens have been locked. Please retry or sign out.'}
-            </>
+            <>{error || t('accessProfileErrorFallback')}</>
           ) : isMissingProfile ? (
             <>
-              Your account (<span className="text-white font-mono">{user?.email}</span>) is authenticated, but no matching record exists in <code className="bg-[#20294A] px-1.5 py-0.5 rounded text-[#70C9DC]">public.profiles</code>. Please ask an administrator to assign your profile record.
+              {t('accessMissingProfilePrefix')}
+              <span className="text-[#17213B] dark:text-white font-mono">{user?.email}</span>
+              {t('accessMissingProfileMid')}
+              <code className="bg-[#F8F7F2] dark:bg-slate-800 px-1.5 py-0.5 rounded text-[#174E50] dark:text-teal-300 border border-[#E6E8E2] dark:border-slate-700">
+                public.profiles
+              </code>
+              {t('accessMissingProfileSuffix')}
             </>
           ) : isUnknownRole ? (
             <>
               {error || (
                 <>
-                  Your account (<span className="text-white font-semibold">{profile?.full_name || user?.email}</span>) has an unrecognized role <span className="uppercase font-bold text-[#E5C47A] bg-[#20294A] px-2 py-0.5 rounded text-[11px]">{role || 'unknown'}</span>. Please ask an administrator to assign a supported role.
+                  {t('accessUnknownRolePrefix')}
+                  <span className="text-[#17213B] dark:text-white font-semibold">
+                    {profile?.full_name || user?.email}
+                  </span>
+                  {t('accessUnknownRoleMid')}
+                  <span className="uppercase font-bold text-amber-800 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/60 border border-amber-200 dark:border-amber-700/50 px-2 py-0.5 rounded text-[11px]">
+                    {role || t('accessUnknown')}
+                  </span>
+                  {t('accessUnknownRoleSuffix')}
                 </>
               )}
             </>
@@ -55,25 +73,37 @@ export const AccessDenied: React.FC = () => {
             <>
               {error || (
                 <>
-                  You are signed in as <span className="text-white font-semibold">{profile?.full_name || user?.email}</span>, but access could not be granted for role <span className="uppercase font-bold text-[#E5C47A] bg-[#20294A] px-2 py-0.5 rounded text-[11px]">{role || 'none'}</span>.
+                  {t('accessDeniedPrefix')}
+                  <span className="text-[#17213B] dark:text-white font-semibold">
+                    {profile?.full_name || user?.email}
+                  </span>
+                  {t('accessDeniedMid')}
+                  <span className="uppercase font-bold text-amber-800 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/60 border border-amber-200 dark:border-amber-700/50 px-2 py-0.5 rounded text-[11px]">
+                    {role ? translateRole(language, role) : t('accessNone')}
+                  </span>
+                  {t('accessDeniedSuffix')}
                 </>
               )}
             </>
           )}
         </p>
 
-        <div className="p-3.5 rounded-2xl bg-[#20294A]/60 border border-[#48547B]/40 text-left text-xs text-[#7B8794] space-y-1 mb-6">
-          <div className="flex justify-between">
-            <span>User ID:</span>
-            <span className="font-mono text-slate-300 text-[11px] truncate max-w-[200px]">{user?.id}</span>
+        <div className="p-3.5 rounded-xl bg-[#F8F7F2] dark:bg-[#0D1520] border border-[#E6E8E2] dark:border-slate-800 text-start text-xs text-[#64748B] dark:text-slate-400 space-y-1.5 mb-6">
+          <div className="flex justify-between gap-2">
+            <span>{t('accessUserId')}</span>
+            <span className="font-mono text-[#17213B] dark:text-slate-200 text-[11px] truncate max-w-[200px]">
+              {user?.id}
+            </span>
           </div>
-          <div className="flex justify-between">
-            <span>Email:</span>
-            <span className="text-slate-300">{user?.email}</span>
+          <div className="flex justify-between gap-2">
+            <span>{t('accessEmail')}</span>
+            <span className="text-[#17213B] dark:text-slate-200">{user?.email}</span>
           </div>
-          <div className="flex justify-between">
-            <span>Assigned Role:</span>
-            <span className="text-[#E5C47A] font-semibold">{role || 'None'}</span>
+          <div className="flex justify-between gap-2">
+            <span>{t('accessAssignedRole')}</span>
+            <span className="text-[#174E50] dark:text-teal-300 font-semibold">
+              {role ? translateRole(language, role) : t('accessNone')}
+            </span>
           </div>
         </div>
 
@@ -81,18 +111,18 @@ export const AccessDenied: React.FC = () => {
           <button
             onClick={() => refreshProfile()}
             disabled={loading}
-            className="flex-1 py-3 px-4 rounded-xl border border-[#48547B] bg-[#20294A]/60 hover:bg-[#20294A] text-xs font-semibold text-slate-200 flex items-center justify-center gap-2 transition"
+            className="flex-1 py-3 px-4 rounded-xl border border-[#E6E8E2] dark:border-slate-700 bg-[#F8F7F2] dark:bg-slate-800 hover:bg-[#E6E8E2]/60 dark:hover:bg-slate-700 text-xs font-semibold text-[#17213B] dark:text-slate-200 flex items-center justify-center gap-2 transition cursor-pointer"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
-            <span>Recheck Access</span>
+            <span>{t('recheckAccess')}</span>
           </button>
 
           <button
             onClick={() => signOut()}
-            className="flex-1 py-3 px-4 rounded-xl bg-rose-600 hover:bg-rose-700 text-xs font-bold text-white flex items-center justify-center gap-2 transition shadow-lg shadow-rose-900/30"
+            className="flex-1 py-3 px-4 rounded-xl bg-rose-600 hover:bg-rose-700 text-xs font-bold text-white flex items-center justify-center gap-2 transition shadow-sm cursor-pointer"
           >
             <LogOut className="w-3.5 h-3.5" />
-            <span>Sign Out</span>
+            <span>{t('signOut')}</span>
           </button>
         </div>
       </div>

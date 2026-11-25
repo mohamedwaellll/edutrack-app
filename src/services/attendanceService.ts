@@ -104,13 +104,29 @@ export const attendanceService = {
         return { data: null, error: `Failed to load attendance records: ${attendanceErr.message}`, code: attendanceErr.code };
       }
 
-      const logMap = new Map<string, any>();
-      (attendanceLogs || []).forEach((item: any) => {
+      interface AttendanceLogRow {
+        id: string;
+        student_id: string;
+        status: AttendanceStatus;
+        check_in_time: string | null;
+        date: string;
+      }
+
+      interface RosterStudentRow {
+        id: string;
+        full_name: string;
+        student_code: string;
+        group_id: string;
+        groups?: { name?: string | null } | null;
+      }
+
+      const logMap = new Map<string, AttendanceLogRow>();
+      ((attendanceLogs || []) as AttendanceLogRow[]).forEach((item) => {
         logMap.set(item.student_id, item);
       });
 
       // 3. Merge: students without an entry are explicitly marked 'Not marked'
-      const roster: AttendanceRosterItem[] = students.map((s: any) => {
+      const roster: AttendanceRosterItem[] = (students as RosterStudentRow[]).map((s) => {
         const record = logMap.get(s.id);
         const groupName = s.groups?.name || 'Class';
 
@@ -122,7 +138,7 @@ export const attendanceService = {
             group_id: s.group_id,
             group_name: groupName,
             attendance_id: record.id,
-            status: record.status as AttendanceStatus,
+            status: record.status,
             check_in_time: record.check_in_time || null,
             date: record.date,
           };
@@ -142,8 +158,11 @@ export const attendanceService = {
       });
 
       return { data: roster, error: null };
-    } catch (err: any) {
-      return { data: null, error: err.message || 'Failed to fetch group roster attendance' };
+    } catch (err: unknown) {
+      return {
+        data: null,
+        error: err instanceof Error && err.message ? err.message : 'Failed to fetch group roster attendance',
+      };
     }
   },
 
@@ -283,8 +302,11 @@ export const attendanceService = {
       };
 
       return { data: formatted, error: null };
-    } catch (err: any) {
-      return { data: null, error: err.message || 'Failed to save attendance record' };
+    } catch (err: unknown) {
+      return {
+        data: null,
+        error: err instanceof Error && err.message ? err.message : 'Failed to save attendance record',
+      };
     }
   },
 
@@ -343,10 +365,10 @@ export const attendanceService = {
         data: data as QRAttendanceResult,
         error: null,
       };
-    } catch (err: any) {
+    } catch (err: unknown) {
       return {
         data: null,
-        error: err.message || 'Failed to record QR attendance',
+        error: err instanceof Error && err.message ? err.message : 'Failed to record QR attendance',
       };
     }
   },

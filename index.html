@@ -1,15 +1,33 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" dir="ltr">
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>EduTrack — Cosmic Learning Portal</title>
+    <title>EduTrack — Learning Center Portal</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <script>
+      try {
+        var savedTheme = window.localStorage.getItem('edutrack:theme');
+        if (savedTheme === 'dark') {
+          document.documentElement.classList.add('dark');
+        } else {
+          document.documentElement.classList.remove('dark');
+        }
+        var savedLang = window.localStorage.getItem('edutrack:language');
+        if (savedLang === 'ar') {
+          document.documentElement.lang = 'ar';
+          document.documentElement.dir = 'rtl';
+        } else {
+          document.documentElement.lang = 'en';
+          document.documentElement.dir = 'ltr';
+        }
+      } catch (e) {}
+    </script>
   </head>
-  <body class="bg-edu-offwhite text-edu-textPrimary antialiased selection:bg-edu-mint selection:text-edu-teal">
+  <body class="bg-[#F8F7F2] text-[#26334A] dark:bg-[#0B121B] dark:text-slate-100 antialiased selection:bg-[#D8E8DC] selection:text-[#174E50] dark:selection:bg-teal-900 dark:selection:text-teal-100">
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

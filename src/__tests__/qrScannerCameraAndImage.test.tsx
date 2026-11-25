@@ -6,7 +6,6 @@ import ReactDOMServer from 'react-dom/server';
 import jsQR from 'jsqr';
 import { AttendanceQRScanner } from '../components/AttendanceQRScanner';
 import StudentIdCard, { StudentCardData } from '../components/StudentIdCard';
-import { QRCodeSVG } from 'qrcode.react';
 
 describe('Milestone 3: Camera Stream Cleanup & Real Card QR Decoding', () => {
   beforeEach(() => {
@@ -14,10 +13,9 @@ describe('Milestone 3: Camera Stream Cleanup & Real Card QR Decoding', () => {
   });
 
   describe('1. Late-Arriving Camera Stream Cleanup', () => {
-    let mockTrack: { stop: any; readyState: string };
-    let mockStream: { getTracks: any };
-    let getUserMediaResolve: ((stream: any) => void) | null = null;
-    let getUserMediaReject: ((err: any) => void) | null = null;
+    let mockTrack: { stop: ReturnType<typeof vi.fn>; readyState: string };
+    let mockStream: { getTracks: ReturnType<typeof vi.fn> };
+    let getUserMediaResolve: ((stream: MediaStream) => void) | null = null;
 
     beforeEach(() => {
       mockTrack = {
@@ -33,9 +31,8 @@ describe('Milestone 3: Camera Stream Cleanup & Real Card QR Decoding', () => {
         configurable: true,
         value: {
           getUserMedia: vi.fn().mockImplementation(() => {
-            return new Promise((resolve, reject) => {
+            return new Promise<MediaStream>((resolve) => {
               getUserMediaResolve = resolve;
-              getUserMediaReject = reject;
             });
           }),
         },
@@ -44,7 +41,6 @@ describe('Milestone 3: Camera Stream Cleanup & Real Card QR Decoding', () => {
 
     afterEach(() => {
       getUserMediaResolve = null;
-      getUserMediaReject = null;
     });
 
     it('immediately stops any late-arriving media stream if user clicked Stop Camera while permission was pending', async () => {

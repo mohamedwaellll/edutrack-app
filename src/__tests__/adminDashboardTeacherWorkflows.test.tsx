@@ -4,14 +4,15 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react';
 import AdminDashboard from '../components/AdminDashboard';
 import { adminService } from '../services/adminService';
+import { useAuth } from '../contexts/authState';
 
 // Mock AuthContext
-vi.mock('../contexts/AuthContext', () => ({
-  useAuth: () => ({
+vi.mock('../contexts/authState', () => ({
+  useAuth: vi.fn(() => ({
     user: { id: 'admin-uuid', email: 'admin@edutrack.com' },
     profile: { id: 'admin-uuid', email: 'admin@edutrack.com', full_name: 'Admin User', role: 'admin' },
     signOut: vi.fn(),
-  }),
+  })),
 }));
 
 // Mock AttendanceQRScanner to avoid camera/web-api requirements in jsdom
@@ -21,10 +22,12 @@ vi.mock('../components/AttendanceQRScanner', () => ({
 
 // Mock recharts
 vi.mock('recharts', async () => {
-  const actual: any = await vi.importActual('recharts');
+  const actual = await vi.importActual<typeof import('recharts')>('recharts');
   return {
     ...actual,
-    ResponsiveContainer: ({ children }: any) => <div style={{ width: 400, height: 200 }}>{children}</div>,
+    ResponsiveContainer: ({ children }: { children?: React.ReactNode }) => (
+      <div style={{ width: 400, height: 200 }}>{children}</div>
+    ),
   };
 });
 
@@ -79,6 +82,41 @@ describe('AdminDashboard Teacher Workflows & Integrity (Component Tests)', () =>
 
   afterEach(() => {
     cleanup();
+  });
+
+  it('paginates the student directory and searches all loaded students', async () => {
+    vi.mocked(adminService.getStudents).mockResolvedValue({
+      error: null,
+      data: Array.from({ length: 28 }, (_, index) => ({
+        id: `student-${index + 1}`,
+        full_name: `Student ${index + 1}`,
+        student_code: `ET-${1000 + index}`,
+        group_id: 'group-1',
+        class_name: 'Grade 8A',
+        grade_level: 'Grade 8',
+        status: 'active',
+        qr_code_hash: '',
+        created_at: '2026-11-24T00:00:00Z',
+      })),
+    });
+
+    render(<AdminDashboard />);
+    fireEvent.click(screen.getByRole('button', { name: 'Students', exact: true }));
+    await screen.findByText('Page 1 of 2');
+    expect(screen.getByText('ET-1000')).toBeDefined();
+    expect(screen.queryByText('ET-1027')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
+    expect(screen.getByText('Page 2 of 2')).toBeDefined();
+    expect(screen.getByText('ET-1027')).toBeDefined();
+    expect(screen.queryByText('ET-1000')).toBeNull();
+
+    const search = screen.getByPlaceholderText(/search students/i);
+    fireEvent.change(search, { target: { value: 'ET-1000' } });
+    expect(screen.getByText('ET-1000')).toBeDefined();
+    expect(screen.queryByRole('button', { name: 'Next page' })).toBeNull();
+    fireEvent.change(search, { target: { value: '' } });
+    expect(screen.getByText('Page 1 of 2')).toBeDefined();
   });
 
   // 1. REPRODUCTION 1: Teacher directory failure inside assignment workflow
@@ -377,12 +415,13 @@ describe('AdminDashboard Teacher Workflows & Integrity (Component Tests)', () =>
 
   // 9. Rapid repeated unassignment submits only once
   it('9. Rapid repeated unassignment submits only once due to synchronous guard', async () => {
-    let resolveAssign: any;
-    const assignPromise = new Promise<{ data: any; error: any }>((resolve) => {
+    type AssignResult = Awaited<ReturnType<typeof adminService.updateGroupTeacher>>;
+    let resolveAssign!: (val: AssignResult) => void;
+    const assignPromise = new Promise<AssignResult>((resolve) => {
       resolveAssign = resolve;
     });
 
-    const updateGroupTeacherSpy = vi.spyOn(adminService, 'updateGroupTeacher').mockReturnValue(assignPromise as any);
+    const updateGroupTeacherSpy = vi.spyOn(adminService, 'updateGroupTeacher').mockReturnValue(assignPromise);
 
     render(<AdminDashboard />);
 
@@ -551,5 +590,178 @@ describe('AdminDashboard Teacher Workflows & Integrity (Component Tests)', () =>
         })
       );
     });
+  });
+
+  // 12. Edit Class Group workflow: prefill, validation, draft preservation on error, double-submit guard, revalidation guard, and confirmed server update
+  it('12. Edit Class Group prefills values, validates capacity, keeps draft on error, blocks double submit & revalidation, and updates from server result', async () => {
+    let currentClass = {
+      id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      name: 'Grade 8A',
+      grade_level: 'Grade 8',
+      subject: 'Science',
+      room: 'Room 204',
+      capacity: 30,
+      enrolled_count: 12,
+      schedule: 'Sun - Thu: 08:00 AM - 02:00 PM',
+      teacher_id: '11111111-1111-4111-8111-111111111111',
+      teacher_name: 'Dr. Salma',
+      created_at: new Date().toISOString(),
+    };
+
+    vi.spyOn(adminService, 'getClasses').mockImplementation(async () => ({
+      data: [currentClass],
+      error: null,
+    }));
+
+    let resolveSecondSave!: (val: { data: typeof currentClass | null; error: string | null }) => void;
+    const updateClassSpy = vi
+      .spyOn(adminService, 'updateClass')
+      .mockResolvedValueOnce({
+        data: null,
+        error: 'Permission denied on groups update',
+      })
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveSecondSave = resolve;
+          })
+      );
+
+    render(<AdminDashboard />);
+
+    fireEvent.click(screen.getByRole('button', { name: /Classes & Groups/i }));
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /Edit Grade 8A/i })).toBeDefined();
+    });
+
+    // Open Edit modal and verify prefilled fields
+    fireEvent.click(screen.getByRole('button', { name: /Edit Grade 8A/i }));
+
+    const nameInput = screen.getByLabelText(/Class Group Name/i) as HTMLInputElement;
+    const gradeInput = screen.getByLabelText(/Grade Level/i) as HTMLInputElement;
+    const subjectInput = screen.getByLabelText(/^Subject$/i) as HTMLInputElement;
+    const roomInput = screen.getByLabelText(/^Room$/i) as HTMLInputElement;
+    const capacityInput = screen.getByLabelText(/^Capacity/i) as HTMLInputElement;
+    const scheduleInput = screen.getByLabelText(/^Schedule$/i) as HTMLInputElement;
+
+    expect(nameInput.value).toBe('Grade 8A');
+    expect(gradeInput.value).toBe('Grade 8');
+    expect(subjectInput.value).toBe('Science');
+    expect(roomInput.value).toBe('Room 204');
+    expect(capacityInput.value).toBe('30');
+    expect(scheduleInput.value).toBe('Sun - Thu: 08:00 AM - 02:00 PM');
+
+    // Invalid capacity (0) blocked before calling service
+    fireEvent.change(capacityInput, { target: { value: '0' } });
+    fireEvent.click(screen.getByRole('button', { name: /Save Changes/i }));
+    expect(screen.getByText(/positive whole number/i)).toBeDefined();
+    expect(updateClassSpy).not.toHaveBeenCalled();
+
+    // Enter valid updated values, trigger server error, and verify draft is preserved
+    fireEvent.change(nameInput, { target: { value: 'Grade 8A Honors' } });
+    fireEvent.change(roomInput, { target: { value: 'Lab 101' } });
+    fireEvent.change(capacityInput, { target: { value: '35' } });
+    fireEvent.change(scheduleInput, { target: { value: 'Mon - Wed: 09:00 AM - 01:00 PM' } });
+
+    fireEvent.click(screen.getByRole('button', { name: /Save Changes/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Permission denied on groups update')).toBeDefined();
+    });
+    expect((screen.getByLabelText(/Class Group Name/i) as HTMLInputElement).value).toBe('Grade 8A Honors');
+    expect((screen.getByLabelText(/^Room$/i) as HTMLInputElement).value).toBe('Lab 101');
+    expect((screen.getByLabelText(/^Capacity/i) as HTMLInputElement).value).toBe('35');
+
+    // Double-click Save Changes while in-flight -> only 1 additional call
+    const saveBtn = screen.getByRole('button', { name: /Save Changes/i });
+    fireEvent.click(saveBtn);
+    fireEvent.click(saveBtn);
+
+    expect(updateClassSpy).toHaveBeenCalledTimes(2);
+    const secondCallArg = updateClassSpy.mock.calls[1][0];
+    expect(secondCallArg).toEqual({
+      id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      name: 'Grade 8A Honors',
+      grade_level: 'Grade 8',
+      subject: 'Science',
+      room: 'Lab 101',
+      capacity: 35,
+      schedule: 'Mon - Wed: 09:00 AM - 01:00 PM',
+    });
+    expect(secondCallArg).not.toHaveProperty('teacher_id');
+    expect(secondCallArg).not.toHaveProperty('enrolled_count');
+
+    const updatedRow = {
+      ...currentClass,
+      name: 'Grade 8A Honors',
+      room: 'Lab 101',
+      capacity: 35,
+      schedule: 'Mon - Wed: 09:00 AM - 01:00 PM',
+    };
+    currentClass = updatedRow;
+    resolveSecondSave({ data: updatedRow, error: null });
+
+    await waitFor(() => {
+      expect(screen.queryByRole('heading', { name: /Edit Class Group/i })).toBeNull();
+      expect(screen.getByText('Grade 8A Honors')).toBeDefined();
+      expect(screen.getByText('Lab 101')).toBeDefined();
+      expect(screen.getByText('12 / 35')).toBeDefined();
+      expect(screen.getByText('Dr. Salma')).toBeDefined();
+    });
+  });
+
+  // 13. Edit Class Group honors auth revalidation guard
+  it('13. Edit Class Group blocks submission while session is revalidating', async () => {
+    vi.mocked(useAuth).mockReturnValue({
+      user: { id: 'admin-1', email: 'admin@edutrack.edu' } as unknown as ReturnType<typeof useAuth>['user'],
+      profile: {
+        id: 'admin-1',
+        email: 'admin@edutrack.edu',
+        full_name: 'Admin User',
+        role: 'admin',
+        created_at: new Date().toISOString(),
+      },
+      session: null,
+      loading: false,
+      isRevalidating: true,
+      signIn: vi.fn(),
+      signUp: vi.fn(),
+      signOut: vi.fn(),
+      refreshProfile: vi.fn(),
+    });
+
+    vi.spyOn(adminService, 'getClasses').mockResolvedValue({
+      data: [
+        {
+          id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+          name: 'Grade 8A',
+          grade_level: 'Grade 8',
+          subject: 'Science',
+          room: 'Room 204',
+          capacity: 30,
+          enrolled_count: 12,
+          schedule: 'Sun - Thu: 08:00 AM - 02:00 PM',
+          teacher_id: null,
+          teacher_name: 'Unassigned',
+          created_at: new Date().toISOString(),
+        },
+      ],
+      error: null,
+    });
+
+    const updateClassSpy = vi.spyOn(adminService, 'updateClass');
+    render(<AdminDashboard />);
+
+    fireEvent.click(screen.getByRole('button', { name: /Classes & Groups/i }));
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /Edit Grade 8A/i })).toBeDefined();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /Edit Grade 8A/i }));
+    const form = screen.getByLabelText(/Class Group Name/i).closest('form')!;
+    fireEvent.submit(form);
+
+    expect(screen.getByText('Verifying session permissions. Please wait before saving.')).toBeDefined();
+    expect(updateClassSpy).not.toHaveBeenCalled();
   });
 });

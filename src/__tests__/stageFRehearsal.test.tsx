@@ -2,6 +2,7 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, act, within } from '@testing-library/react';
+import type { AuthChangeEvent, AuthError, Session, Subscription, User } from '@supabase/supabase-js';
 import { PGlite } from '@electric-sql/pglite';
 import fs from 'fs';
 import path from 'path';
@@ -107,15 +108,23 @@ function wirePgliteSupabaseBridge(
   db: PGlite,
   credentials: Record<string, { uid: string; email: string; password: string }>
 ) {
-  let currentSession: { user: { id: string; email: string }; access_token: string } | null = null;
-  const authListeners = new Set<(event: string, session: any) => void>();
+  let currentSession: Session | null = null;
+  const authListeners = new Set<(event: AuthChangeEvent, session: Session | null) => void>();
 
-  let dbLock: Promise<any> = Promise.resolve();
+  let dbLock: Promise<unknown> = Promise.resolve();
   const withDb = <T,>(fn: () => Promise<T>): Promise<T> => {
     const next = dbLock.then(fn, fn);
     dbLock = next.catch(() => undefined);
     return next;
   };
+
+  const getPgError = (err: unknown, fallback: string) => ({
+    message: err instanceof Error && err.message ? err.message : fallback,
+    code:
+      typeof err === 'object' && err !== null && 'code' in err
+        ? String((err as { code?: unknown }).code ?? '')
+        : undefined,
+  });
 
   const setDbRole = async () => {
     if (!currentSession) {
@@ -128,11 +137,11 @@ function wirePgliteSupabaseBridge(
   };
 
   vi.spyOn(supabase.auth, 'getSession').mockImplementation(async () => ({
-    data: { session: currentSession as any },
+    data: { session: currentSession },
     error: null,
   }));
 
-  vi.spyOn(supabase.auth, 'onAuthStateChange').mockImplementation((cb: any) => {
+  vi.spyOn(supabase.auth, 'onAuthStateChange').mockImplementation((cb) => {
     authListeners.add(cb);
     return {
       data: {
@@ -140,24 +149,33 @@ function wirePgliteSupabaseBridge(
           unsubscribe: () => {
             authListeners.delete(cb);
           },
-        },
+        } as unknown as Subscription,
       },
-    } as any;
+    };
   });
 
-  vi.spyOn(supabase.auth, 'signInWithPassword').mockImplementation(async ({ email, password }: any) => {
-    const match = credentials[String(email || '').trim().toLowerCase()];
+  vi.spyOn(supabase.auth, 'signInWithPassword').mockImplementation(async (creds) => {
+    const email = 'email' in creds ? String(creds.email || '').trim().toLowerCase() : '';
+    const password = 'password' in creds ? creds.password : '';
+    const match = credentials[email];
     if (!match || match.password !== password) {
-      return { data: { user: null, session: null }, error: { message: 'Invalid login credentials' } } as any;
+      return {
+        data: { user: null, session: null },
+        error: { message: 'Invalid login credentials' } as AuthError,
+      };
     }
+    const fakeUser = { id: match.uid, email: match.email } as unknown as User;
     currentSession = {
-      user: { id: match.uid, email: match.email },
+      user: fakeUser,
       access_token: `pglite-jwt-${match.uid}`,
+      refresh_token: `pglite-ref-${match.uid}`,
+      expires_in: 3600,
+      token_type: 'bearer',
     };
     for (const listener of Array.from(authListeners)) {
       listener('SIGNED_IN', currentSession);
     }
-    return { data: { user: currentSession.user as any, session: currentSession as any }, error: null } as any;
+    return { data: { user: fakeUser, session: currentSession }, error: null };
   });
 
   vi.spyOn(supabase.auth, 'signOut').mockImplementation(async () => {
@@ -165,14 +183,14 @@ function wirePgliteSupabaseBridge(
     for (const listener of Array.from(authListeners)) {
       listener('SIGNED_OUT', null);
     }
-    return { error: null } as any;
+    return { error: null };
   });
 
-  vi.spyOn(supabase, 'rpc').mockImplementation(((fnName: string, params: Record<string, any> = {}) =>
+  vi.spyOn(supabase, 'rpc').mockImplementation(((fnName: string, params: Record<string, unknown> = {}) =>
     withDb(async () => {
       try {
         await setDbRole();
-        let res: any;
+        let res: { rows: Array<Record<string, unknown>> };
         switch (fnName) {
           case 'link_teacher_account':
             res = await db.query(
@@ -251,13 +269,13 @@ function wirePgliteSupabaseBridge(
         }
         const raw = res.rows[0]?.res;
         return { data: typeof raw === 'string' ? JSON.parse(raw) : raw, error: null };
-      } catch (err: any) {
-        return { data: null, error: { message: err?.message || 'Database RPC error', code: err?.code } };
+      } catch (err: unknown) {
+        return { data: null, error: getPgError(err, 'Database RPC error') };
       }
-    })) as any);
+    })) as unknown as typeof supabase.rpc);
 
   vi.spyOn(supabase, 'from').mockImplementation(((table: string) => {
-    const filters: Array<{ col: string; op: string; val: any }> = [];
+    const filters: Array<{ col: string; op: string; val: unknown }> = [];
     let selectCols = '*';
     let orderCol: string | null = null;
     let orderAsc = true;
@@ -266,10 +284,10 @@ function wirePgliteSupabaseBridge(
     let countMode = false;
 
     const buildWhere = () => {
-      const args: any[] = [];
+      const args: unknown[] = [];
       const clauses = filters.map((f) => {
         if (f.op === 'in') {
-          args.push((f.val || []).map((v: any) => String(v)));
+          args.push((Array.isArray(f.val) ? f.val : []).map((v) => String(v)));
           return `${tableAlias}.${f.col}::text = ANY($${args.length}::text[])`;
         }
         args.push(String(f.val));
@@ -292,7 +310,10 @@ function wirePgliteSupabaseBridge(
           const limitSql = limitNum !== null ? `LIMIT ${limitNum}` : '';
 
           if (countMode && headMode) {
-            const res = await db.query(`SELECT count(*)::int AS cnt FROM public.${table} ${tableAlias} ${whereSql};`, args);
+            const res = await db.query<{ cnt: number }>(
+              `SELECT count(*)::int AS cnt FROM public.${table} ${tableAlias} ${whereSql};`,
+              args
+            );
             return { data: null, count: res.rows[0].cnt, error: null };
           }
 
@@ -307,44 +328,49 @@ function wirePgliteSupabaseBridge(
             sql = `SELECT ${tableAlias}.*, jsonb_build_object('full_name', pr.full_name, 'email', pr.email) AS parent, jsonb_build_object('full_name', st.full_name, 'student_code', st.student_code) AS student FROM public.parent_student_links ${tableAlias} LEFT JOIN public.profiles pr ON pr.id = ${tableAlias}.parent_id LEFT JOIN public.students st ON st.id = ${tableAlias}.student_id ${whereSql} ${orderSql} ${limitSql};`;
           }
 
-          const res = await db.query(sql, args);
-          const normalized = res.rows.map((r: any) => ({
+          const res = await db.query<Record<string, unknown>>(sql, args);
+          const normalized = res.rows.map((r) => ({
             ...r,
             date: r.date instanceof Date ? r.date.toISOString().slice(0, 10) : r.date,
             assessment_date: r.assessment_date instanceof Date ? r.assessment_date.toISOString().slice(0, 10) : r.assessment_date,
             check_in_time: typeof r.check_in_time === 'string' && r.check_in_time.length >= 5 ? r.check_in_time.slice(0, 5) : r.check_in_time,
           }));
           return { data: normalized, count: countMode ? normalized.length : null, error: null };
-        } catch (err: any) {
-          console.error('BRIDGE SELECT ERR', table, err?.message || err);
-          return { data: null, count: null, error: { message: err?.message || 'Select error', code: err?.code } };
+        } catch (err: unknown) {
+          const pgErr = getPgError(err, 'Select error');
+          console.error('BRIDGE SELECT ERR', table, pgErr.message);
+          return { data: null, count: null, error: pgErr };
         }
       });
 
-    const builder: any = {
-      select(cols = '*', opts?: any) {
+    type SelectResult = Awaited<ReturnType<typeof executeSelect>>;
+    type QueryCallback<T> = ((value: T) => unknown) | null | undefined;
+    type RejectCallback = ((reason: unknown) => unknown) | null | undefined;
+
+    const builder = {
+      select(cols = '*', opts?: { count?: string; head?: boolean }) {
         selectCols = cols;
         countMode = opts?.count === 'exact';
         headMode = Boolean(opts?.head);
         return builder;
       },
-      eq(col: string, val: any) {
+      eq(col: string, val: unknown) {
         filters.push({ col, op: 'eq', val });
         return builder;
       },
-      gte(col: string, val: any) {
+      gte(col: string, val: unknown) {
         filters.push({ col, op: 'gte', val });
         return builder;
       },
-      lte(col: string, val: any) {
+      lte(col: string, val: unknown) {
         filters.push({ col, op: 'lte', val });
         return builder;
       },
-      in(col: string, vals: any[]) {
+      in(col: string, vals: unknown[]) {
         filters.push({ col, op: 'in', val: vals });
         return builder;
       },
-      order(col: string, opts?: any) {
+      order(col: string, opts?: { ascending?: boolean }) {
         orderCol = col;
         orderAsc = opts?.ascending !== false;
         return builder;
@@ -361,12 +387,12 @@ function wirePgliteSupabaseBridge(
         const res = await executeSelect();
         return { data: res.data?.[0] ?? null, error: res.data?.[0] ? null : { message: 'Row not found' } };
       },
-      then(onFulfilled: any, onRejected: any) {
+      then(onFulfilled: QueryCallback<SelectResult>, onRejected: RejectCallback) {
         return executeSelect().then(onFulfilled, onRejected);
       },
-      update(patch: Record<string, any>) {
+      update(patch: Record<string, unknown>) {
         return {
-          eq(col: string, val: any) {
+          eq(col: string, val: unknown) {
             const runUpdate = (cols = '*') =>
               withDb(async () => {
                 try {
@@ -376,24 +402,26 @@ function wirePgliteSupabaseBridge(
                     .map((k, i) => (k === 'teacher_id' ? `${k} = $${i + 1}::uuid` : `${k} = $${i + 1}`))
                     .join(', ');
                   const args = [...keys.map((k) => patch[k]), val];
-                  const res = await db.query(
+                  const res = await db.query<Record<string, unknown>>(
                     `UPDATE public.${table} SET ${sets} WHERE ${col}::text = $${args.length}::text RETURNING *;`,
                     args
                   );
                   let rows = res.rows;
                   if (table === 'groups' && cols.includes('teachers') && rows.length > 0) {
-                    const enriched = await db.query(
+                    const enriched = await db.query<Record<string, unknown>>(
                       `SELECT g.*, CASE WHEN tr.id IS NULL THEN NULL ELSE jsonb_build_object('full_name', tr.full_name) END AS teachers FROM public.groups g LEFT JOIN public.teachers tr ON tr.id = g.teacher_id WHERE g.id = $1::uuid;`,
                       [rows[0].id]
                     );
                     rows = enriched.rows;
                   }
                   return { data: rows, error: null };
-                } catch (err: any) {
-                  console.error('BRIDGE UPDATE ERR', table, err?.message || err);
-                  return { data: null, error: { message: err?.message || 'Update error', code: err?.code } };
+                } catch (err: unknown) {
+                  const pgErr = getPgError(err, 'Update error');
+                  console.error('BRIDGE UPDATE ERR', table, pgErr.message);
+                  return { data: null, error: pgErr };
                 }
               });
+            type UpdateResult = Awaited<ReturnType<typeof runUpdate>>;
             return {
               select(cols = '*') {
                 return {
@@ -405,15 +433,15 @@ function wirePgliteSupabaseBridge(
                     const res = await runUpdate(cols);
                     return { data: res.data?.[0] ?? null, error: res.error || (res.data?.[0] ? null : { message: 'Row not found' }) };
                   },
-                  then: (ok: any, err: any) => runUpdate(cols).then(ok, err),
+                  then: (ok: QueryCallback<UpdateResult>, err: RejectCallback) => runUpdate(cols).then(ok, err),
                 };
               },
-              then: (ok: any, err: any) => runUpdate().then(ok, err),
+              then: (ok: QueryCallback<UpdateResult>, err: RejectCallback) => runUpdate().then(ok, err),
             };
           },
         };
       },
-      insert(rows: any) {
+      insert(rows: Record<string, unknown> | Array<Record<string, unknown>>) {
         const list = Array.isArray(rows) ? rows : [rows];
         const execInsert = () =>
           withDb(async () => {
@@ -425,12 +453,13 @@ function wirePgliteSupabaseBridge(
             const keys = Object.keys(row);
             const colsSql = keys.join(', ');
             const valsSql = keys.map((_, i) => `$${i + 1}`).join(', ');
-            const res = await db.query(
+            const res = await db.query<Record<string, unknown>>(
               `INSERT INTO public.${table} (${colsSql}) VALUES (${valsSql}) RETURNING *;`,
               keys.map((k) => row[k])
             );
             return { data: res.rows, error: null };
           });
+        type InsertResult = Awaited<ReturnType<typeof execInsert>>;
         return {
           select() {
             return {
@@ -438,15 +467,15 @@ function wirePgliteSupabaseBridge(
                 const res = await execInsert();
                 return { data: res.data[0], error: null };
               },
-              then: (ok: any, err: any) => execInsert().then(ok, err),
+              then: (ok: QueryCallback<InsertResult>, err: RejectCallback) => execInsert().then(ok, err),
             };
           },
-          then: (ok: any, err: any) => execInsert().then(ok, err),
+          then: (ok: QueryCallback<InsertResult>, err: RejectCallback) => execInsert().then(ok, err),
         };
       },
     };
     return builder;
-  }) as any);
+  }) as unknown as typeof supabase.from);
 }
 
 describe('Stage F End-to-End Demo Rehearsal (Isolated PGlite DB + Full 4-Role Flow + QR Card Image Scan)', () => {
@@ -636,8 +665,8 @@ describe('Stage F End-to-End Demo Rehearsal (Isolated PGlite DB + Full 4-Role Fl
         setTimeout(() => this.onload?.(), 0);
       }
     }
-    (globalThis as any).FileReader = MockFileReader;
-    (globalThis as any).Image = MockImage;
+    Object.defineProperty(globalThis, 'FileReader', { value: MockFileReader, configurable: true, writable: true });
+    Object.defineProperty(globalThis, 'Image', { value: MockImage, configurable: true, writable: true });
     HTMLCanvasElement.prototype.getContext = vi.fn(() => ({
       drawImage: vi.fn(),
       getImageData: vi.fn(() => ({
@@ -645,7 +674,7 @@ describe('Stage F End-to-End Demo Rehearsal (Isolated PGlite DB + Full 4-Role Fl
         width: rasterQr.width,
         height: rasterQr.height,
       })),
-    })) as any;
+    })) as unknown as typeof HTMLCanvasElement.prototype.getContext;
 
     const nowBase = Date.now();
     const dateNowSpy = vi.spyOn(Date, 'now').mockReturnValue(nowBase);
@@ -675,8 +704,8 @@ describe('Stage F End-to-End Demo Rehearsal (Isolated PGlite DB + Full 4-Role Fl
     });
 
     // Restore browser image globals
-    (globalThis as any).FileReader = origFileReader;
-    (globalThis as any).Image = origImage;
+    Object.defineProperty(globalThis, 'FileReader', { value: origFileReader, configurable: true, writable: true });
+    Object.defineProperty(globalThis, 'Image', { value: origImage, configurable: true, writable: true });
     HTMLCanvasElement.prototype.getContext = origGetContext;
     dateNowSpy.mockRestore();
 

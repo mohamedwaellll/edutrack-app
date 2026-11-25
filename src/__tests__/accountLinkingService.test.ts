@@ -73,7 +73,7 @@ describe('accountLinkingService (Unit Tests)', () => {
       vi.mocked(supabase.rpc).mockResolvedValue({
         data: { success: true, teacher_id: teacherId, user_id: userId },
         error: null,
-      } as any);
+      } as unknown as Awaited<ReturnType<typeof supabase.rpc>>);
 
       const result = await accountLinkingService.linkTeacherAccount(teacherId, userId);
 
@@ -86,10 +86,11 @@ describe('accountLinkingService (Unit Tests)', () => {
     });
 
     it('maps unauthorized error to PERMISSION_DENIED', async () => {
+      type RpcRes = Awaited<ReturnType<typeof supabase.rpc>>;
       vi.mocked(supabase.rpc).mockResolvedValue({
         data: null,
-        error: { message: 'Unauthorized: Administrator privileges required to link accounts' } as any,
-      } as any);
+        error: { message: 'Unauthorized: Administrator privileges required to link accounts' } as RpcRes['error'],
+      } as unknown as RpcRes);
 
       const result = await accountLinkingService.linkTeacherAccount(teacherId, userId);
       expect(result.data).toBeNull();
@@ -97,10 +98,11 @@ describe('accountLinkingService (Unit Tests)', () => {
     });
 
     it('maps role error to ROLE_MISMATCH', async () => {
+      type RpcRes = Awaited<ReturnType<typeof supabase.rpc>>;
       vi.mocked(supabase.rpc).mockResolvedValue({
         data: null,
-        error: { message: 'Cannot link account: user profile must have role teacher, found student' } as any,
-      } as any);
+        error: { message: 'Cannot link account: user profile must have role teacher, found student' } as RpcRes['error'],
+      } as unknown as RpcRes);
 
       const result = await accountLinkingService.linkTeacherAccount(teacherId, userId);
       expect(result.data).toBeNull();
@@ -108,10 +110,11 @@ describe('accountLinkingService (Unit Tests)', () => {
     });
 
     it('maps already linked error to ALREADY_LINKED', async () => {
+      type RpcRes = Awaited<ReturnType<typeof supabase.rpc>>;
       vi.mocked(supabase.rpc).mockResolvedValue({
         data: null,
-        error: { message: 'Conflict: Teacher is already linked to user account 44444444-4444-4444-8444-444444444444' } as any,
-      } as any);
+        error: { message: 'Conflict: Teacher is already linked to user account 44444444-4444-4444-8444-444444444444' } as RpcRes['error'],
+      } as unknown as RpcRes);
 
       const result = await accountLinkingService.linkTeacherAccount(teacherId, userId);
       expect(result.data).toBeNull();
@@ -119,10 +122,11 @@ describe('accountLinkingService (Unit Tests)', () => {
     });
 
     it('maps generic state conflict error to CONFLICT and rejects unconfirmed payload', async () => {
+      type RpcRes = Awaited<ReturnType<typeof supabase.rpc>>;
       vi.mocked(supabase.rpc).mockResolvedValueOnce({
         data: null,
-        error: { message: 'Conflict: Teacher link state changed during unlink operation' } as any,
-      } as any);
+        error: { message: 'Conflict: Teacher link state changed during unlink operation' } as RpcRes['error'],
+      } as unknown as RpcRes);
 
       const resConflict = await accountLinkingService.unlinkTeacherAccount(teacherId);
       expect(resConflict.data).toBeNull();
@@ -131,7 +135,7 @@ describe('accountLinkingService (Unit Tests)', () => {
       vi.mocked(supabase.rpc).mockResolvedValueOnce({
         data: { success: false },
         error: null,
-      } as any);
+      } as unknown as RpcRes);
 
       const resUnconfirmed = await accountLinkingService.linkTeacherAccount(teacherId, userId);
       expect(resUnconfirmed.data).toBeNull();
@@ -144,7 +148,7 @@ describe('accountLinkingService (Unit Tests)', () => {
       vi.mocked(supabase.rpc).mockResolvedValue({
         data: { success: true, teacher_id: teacherId, previous_user_id: userId },
         error: null,
-      } as any);
+      } as unknown as Awaited<ReturnType<typeof supabase.rpc>>);
 
       const result = await accountLinkingService.unlinkTeacherAccount(teacherId);
 
@@ -162,7 +166,7 @@ describe('accountLinkingService (Unit Tests)', () => {
       vi.mocked(supabase.rpc).mockResolvedValue({
         data: { success: true, teacher_id: teacherId, previous_user_id: userId },
         error: null,
-      } as any);
+      } as unknown as Awaited<ReturnType<typeof supabase.rpc>>);
 
       const result = await accountLinkingService.unlinkTeacherAccount(teacherId, userId);
       expect(supabase.rpc).toHaveBeenCalledWith('unlink_teacher_account', {
@@ -179,7 +183,7 @@ describe('accountLinkingService (Unit Tests)', () => {
       vi.mocked(supabase.rpc).mockResolvedValue({
         data: { success: true, student_id: studentId, user_id: userId },
         error: null,
-      } as any);
+      } as unknown as Awaited<ReturnType<typeof supabase.rpc>>);
 
       const result = await accountLinkingService.linkStudentAccount(studentId, userId);
       expect(supabase.rpc).toHaveBeenCalledWith('link_student_account', {
@@ -193,7 +197,7 @@ describe('accountLinkingService (Unit Tests)', () => {
       vi.mocked(supabase.rpc).mockResolvedValue({
         data: { success: true, student_id: studentId, previous_user_id: userId },
         error: null,
-      } as any);
+      } as unknown as Awaited<ReturnType<typeof supabase.rpc>>);
 
       const result = await accountLinkingService.unlinkStudentAccount(studentId);
       expect(supabase.rpc).toHaveBeenCalledWith('unlink_student_account', {
@@ -209,7 +213,7 @@ describe('accountLinkingService (Unit Tests)', () => {
       vi.mocked(supabase.rpc).mockResolvedValue({
         data: { success: true, student_id: studentId, previous_user_id: userId },
         error: null,
-      } as any);
+      } as unknown as Awaited<ReturnType<typeof supabase.rpc>>);
 
       const result = await accountLinkingService.unlinkStudentAccount(studentId, userId);
       expect(supabase.rpc).toHaveBeenCalledWith('unlink_student_account', {
@@ -225,7 +229,7 @@ describe('accountLinkingService (Unit Tests)', () => {
       vi.mocked(supabase.rpc).mockResolvedValue({
         data: { success: true, link_id: 'link-uuid', parent_id: parentId, student_id: studentId },
         error: null,
-      } as any);
+      } as unknown as Awaited<ReturnType<typeof supabase.rpc>>);
 
       const result = await accountLinkingService.linkParentStudent(parentId, studentId);
       expect(supabase.rpc).toHaveBeenCalledWith('link_parent_student', {
@@ -239,7 +243,7 @@ describe('accountLinkingService (Unit Tests)', () => {
       vi.mocked(supabase.rpc).mockResolvedValue({
         data: { success: true, parent_id: parentId, student_id: studentId },
         error: null,
-      } as any);
+      } as unknown as Awaited<ReturnType<typeof supabase.rpc>>);
 
       const result = await accountLinkingService.unlinkParentStudent(parentId, studentId);
       expect(supabase.rpc).toHaveBeenCalledWith('unlink_parent_student', {
@@ -274,7 +278,7 @@ describe('accountLinkingService (Unit Tests)', () => {
         ),
       };
 
-      vi.mocked(supabase.from).mockReturnValue(mockQuery as any);
+      vi.mocked(supabase.from).mockReturnValue(mockQuery as unknown as ReturnType<typeof supabase.from>);
 
       const result = await accountLinkingService.getParentStudentLinks();
       expect(result.error).toBeNull();
@@ -296,7 +300,7 @@ describe('accountLinkingService (Unit Tests)', () => {
         }),
       };
 
-      vi.mocked(supabase.from).mockReturnValue(mockQuery as any);
+      vi.mocked(supabase.from).mockReturnValue(mockQuery as unknown as ReturnType<typeof supabase.from>);
 
       const result = await accountLinkingService.getProfilesByRole('teacher');
       expect(result.error).toBeNull();

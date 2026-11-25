@@ -2,7 +2,9 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, act, waitFor } from '@testing-library/react';
-import { AuthProvider, useAuth } from '../contexts/AuthContext';
+import type { AuthChangeEvent, Session, Subscription } from '@supabase/supabase-js';
+import { AuthProvider } from '../contexts/AuthContext';
+import { useAuth } from '../contexts/authState';
 import App from '../App';
 import { supabase } from '../lib/supabaseClient';
 import * as supabaseClientModule from '../lib/supabaseClient';
@@ -29,7 +31,7 @@ global.ResizeObserver = class ResizeObserver {
 };
 
 describe('AuthProvider & Application Access Gates (Real Component Tests)', () => {
-  let authStateCallback: ((event: string, session: any) => void) | null = null;
+  let authStateCallback: ((event: AuthChangeEvent, session: Session | null) => void) | null = null;
 
   beforeEach(() => {
     vi.restoreAllMocks();
@@ -38,9 +40,9 @@ describe('AuthProvider & Application Access Gates (Real Component Tests)', () =>
     vi.spyOn(supabaseClientModule, 'isSupabaseConfigured').mockReturnValue(true);
 
     // Spy on onAuthStateChange to capture listener
-    vi.spyOn(supabase.auth, 'onAuthStateChange').mockImplementation((cb: any) => {
+    vi.spyOn(supabase.auth, 'onAuthStateChange').mockImplementation((cb) => {
       authStateCallback = cb;
-      return { data: { subscription: { unsubscribe: vi.fn() } } } as any;
+      return { data: { subscription: { unsubscribe: vi.fn() } as unknown as Subscription } };
     });
   });
 
@@ -50,10 +52,10 @@ describe('AuthProvider & Application Access Gates (Real Component Tests)', () =>
 
   it('1. Restored session: loads user profile and grants admin access when role is admin', async () => {
     const mockUser = { id: 'admin-uuid-1', email: 'admin@edutrack.com' };
-    const mockSession = { user: mockUser, access_token: 'fake-token' };
+    const mockSession = { user: mockUser, access_token: 'fake-token' } as unknown as Session;
 
     vi.spyOn(supabase.auth, 'getSession').mockResolvedValue({
-      data: { session: mockSession as any },
+      data: { session: mockSession },
       error: null,
     });
 
@@ -66,7 +68,7 @@ describe('AuthProvider & Application Access Gates (Real Component Tests)', () =>
           }),
         }),
       }),
-    } as any);
+    } as unknown as ReturnType<typeof supabase.from>);
 
     render(
       <AuthProvider>
@@ -83,10 +85,10 @@ describe('AuthProvider & Application Access Gates (Real Component Tests)', () =>
 
   it('2. Logout while profile request is still pending: stale response is ignored and access is revoked', async () => {
     const mockUser = { id: 'admin-uuid-2', email: 'admin@edutrack.com' };
-    const mockSession = { user: mockUser, access_token: 'token-2' };
+    const mockSession = { user: mockUser, access_token: 'token-2' } as unknown as Session;
 
-    let resolvePendingProfile: (val: any) => void;
-    const pendingProfilePromise = new Promise((resolve) => {
+    let resolvePendingProfile: (val: { data: unknown; error: unknown }) => void;
+    const pendingProfilePromise = new Promise<{ data: unknown; error: unknown }>((resolve) => {
       resolvePendingProfile = resolve;
     });
 
@@ -96,7 +98,7 @@ describe('AuthProvider & Application Access Gates (Real Component Tests)', () =>
     });
 
     vi.spyOn(supabase.auth, 'getSession').mockResolvedValue({
-      data: { session: mockSession as any },
+      data: { session: mockSession },
       error: null,
     });
 
@@ -109,7 +111,7 @@ describe('AuthProvider & Application Access Gates (Real Component Tests)', () =>
           },
         }),
       }),
-    } as any);
+    } as unknown as ReturnType<typeof supabase.from>);
 
     vi.spyOn(supabase.auth, 'signOut').mockResolvedValueOnce({ error: null });
 
@@ -144,8 +146,8 @@ describe('AuthProvider & Application Access Gates (Real Component Tests)', () =>
   });
 
   it('3. Account change while profile is pending: prevents race condition / stale profile overwrite', async () => {
-    let resolveProfileA: (val: any) => void;
-    const pendingProfileA = new Promise((resolve) => {
+    let resolveProfileA: (val: { data: unknown; error: unknown }) => void;
+    const pendingProfileA = new Promise<{ data: unknown; error: unknown }>((resolve) => {
       resolveProfileA = resolve;
     });
 
@@ -155,17 +157,17 @@ describe('AuthProvider & Application Access Gates (Real Component Tests)', () =>
     });
 
     const userA = { id: 'user-a-uuid', email: 'admin@edutrack.com' };
-    const sessionA = { user: userA, access_token: 'token-a' };
+    const sessionA = { user: userA, access_token: 'token-a' } as unknown as Session;
 
     const userB = { id: 'user-b-uuid', email: 'student@edutrack.com' };
-    const sessionB = { user: userB, access_token: 'token-b' };
+    const sessionB = { user: userB, access_token: 'token-b' } as unknown as Session;
 
     vi.spyOn(supabase.auth, 'getSession').mockResolvedValueOnce({
-      data: { session: sessionA as any },
+      data: { session: sessionA },
       error: null,
     });
 
-    vi.spyOn(supabase, 'from').mockImplementation((table: string) => {
+    vi.spyOn(supabase, 'from').mockImplementation((() => {
       return {
         select: () => ({
           eq: (_col: string, val: string) => ({
@@ -181,8 +183,8 @@ describe('AuthProvider & Application Access Gates (Real Component Tests)', () =>
             },
           }),
         }),
-      } as any;
-    });
+      };
+    }) as unknown as typeof supabase.from);
 
     render(
       <AuthProvider>
@@ -220,11 +222,11 @@ describe('AuthProvider & Application Access Gates (Real Component Tests)', () =>
 
   it('4. Distinguishes profile-fetch errors versus genuinely missing profiles (fail-closed)', async () => {
     const mockUser = { id: 'user-c-uuid', email: 'missing@edutrack.com' };
-    const mockSession = { user: mockUser, access_token: 'token-c' };
+    const mockSession = { user: mockUser, access_token: 'token-c' } as unknown as Session;
 
     // Case 4A: Genuinely missing profile (data = null, error = null)
     vi.spyOn(supabase.auth, 'getSession').mockResolvedValue({
-      data: { session: mockSession as any },
+      data: { session: mockSession },
       error: null,
     });
 
@@ -234,7 +236,7 @@ describe('AuthProvider & Application Access Gates (Real Component Tests)', () =>
           maybeSingle: () => Promise.resolve({ data: null, error: null }),
         }),
       }),
-    } as any);
+    } as unknown as ReturnType<typeof supabase.from>);
 
     const { unmount } = render(
       <AuthProvider>
@@ -251,7 +253,7 @@ describe('AuthProvider & Application Access Gates (Real Component Tests)', () =>
 
     // Case 4B: Database / network error (error = { message: 'Connection refused' })
     vi.spyOn(supabase.auth, 'getSession').mockResolvedValue({
-      data: { session: mockSession as any },
+      data: { session: mockSession },
       error: null,
     });
 
@@ -261,7 +263,7 @@ describe('AuthProvider & Application Access Gates (Real Component Tests)', () =>
           maybeSingle: () => Promise.resolve({ data: null, error: { message: 'Connection refused' } }),
         }),
       }),
-    } as any);
+    } as unknown as ReturnType<typeof supabase.from>);
 
     render(
       <AuthProvider>
@@ -278,16 +280,16 @@ describe('AuthProvider & Application Access Gates (Real Component Tests)', () =>
 
   it('5. Admin role removal followed by profile refresh: correctly revokes admin access to non-admin', async () => {
     const mockUser = { id: 'admin-uuid-5', email: 'admin@edutrack.com' };
-    const mockSession = { user: mockUser, access_token: 'token-5' };
+    const mockSession = { user: mockUser, access_token: 'token-5' } as unknown as Session;
 
     let currentRole = 'admin';
 
     vi.spyOn(supabase.auth, 'getSession').mockResolvedValue({
-      data: { session: mockSession as any },
+      data: { session: mockSession },
       error: null,
     });
 
-    vi.spyOn(supabase, 'from').mockImplementation((): any => {
+    vi.spyOn(supabase, 'from').mockImplementation((() => {
       return {
         select: () => ({
           eq: () => ({
@@ -298,7 +300,7 @@ describe('AuthProvider & Application Access Gates (Real Component Tests)', () =>
           }),
         }),
       };
-    });
+    }) as unknown as typeof supabase.from);
 
     render(
       <AuthProvider>
@@ -326,16 +328,16 @@ describe('AuthProvider & Application Access Gates (Real Component Tests)', () =>
 
   it('6. Fail closed when profile refresh fails: replaces authenticated_admin with profile_error and hides protected screens', async () => {
     const mockUser = { id: 'admin-uuid-6', email: 'admin@edutrack.com' };
-    const mockSession = { user: mockUser, access_token: 'token-6' };
+    const mockSession = { user: mockUser, access_token: 'token-6' } as unknown as Session;
 
     let failRefresh = false;
 
     vi.spyOn(supabase.auth, 'getSession').mockResolvedValue({
-      data: { session: mockSession as any },
+      data: { session: mockSession },
       error: null,
     });
 
-    vi.spyOn(supabase, 'from').mockImplementation((): any => {
+    vi.spyOn(supabase, 'from').mockImplementation((() => {
       return {
         select: () => ({
           eq: () => ({
@@ -351,7 +353,7 @@ describe('AuthProvider & Application Access Gates (Real Component Tests)', () =>
           }),
         }),
       };
-    });
+    }) as unknown as typeof supabase.from);
 
     render(
       <AuthProvider>
@@ -379,16 +381,16 @@ describe('AuthProvider & Application Access Gates (Real Component Tests)', () =>
 
   it('7. Application access gate: locks protected admin dashboard and displays AccessDenied with retry when profile_error occurs', async () => {
     const mockUser = { id: 'admin-uuid-7', email: 'admin@edutrack.com' };
-    const mockSession = { user: mockUser, access_token: 'token-7' };
+    const mockSession = { user: mockUser, access_token: 'token-7' } as unknown as Session;
 
     let failQuery = false;
 
     vi.spyOn(supabase.auth, 'getSession').mockResolvedValue({
-      data: { session: mockSession as any },
+      data: { session: mockSession },
       error: null,
     });
 
-    vi.spyOn(supabase, 'from').mockImplementation((table: string): any => {
+    vi.spyOn(supabase, 'from').mockImplementation(((table: string) => {
       if (table === 'profiles') {
         return {
           select: () => ({
@@ -411,7 +413,7 @@ describe('AuthProvider & Application Access Gates (Real Component Tests)', () =>
           order: () => Promise.resolve({ data: [], error: null }),
         }),
       };
-    });
+    }) as unknown as typeof supabase.from);
 
     const { unmount } = render(<App />);
 

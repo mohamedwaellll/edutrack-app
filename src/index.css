@@ -4,9 +4,18 @@
 
 @layer base {
   body {
-    font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+    font-family: 'Plus Jakarta Sans', 'Cairo', system-ui, -apple-system, sans-serif;
     background-color: #F8F7F2;
     color: #26334A;
+  }
+
+  html[lang="ar"] body {
+    font-family: 'Cairo', 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+  }
+
+  html.dark body {
+    background-color: #0B121B;
+    color: #F1F5F9;
   }
 }
 
@@ -24,4 +33,19 @@
 }
 ::-webkit-scrollbar-thumb:hover {
   background: #174E50;
+}
+
+html.dark ::-webkit-scrollbar-thumb {
+  background: #334155;
+}
+html.dark ::-webkit-scrollbar-thumb:hover {
+  background: #1E7E81;
+}
+
+@media print {
+  html.dark body,
+  body {
+    background-color: #FFFFFF !important;
+    color: #0F172A !important;
+  }
 }

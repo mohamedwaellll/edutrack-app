@@ -65,7 +65,7 @@ describe('adminService Contract & Business Logic (Unit Tests)', () => {
     it('persists group_id and generates unique qr_code_hash on insert', async () => {
       vi.spyOn(clientModule, 'isSupabaseConfigured').mockReturnValue(true);
 
-      let capturedPayload: any = null;
+      let capturedPayload: Record<string, unknown> | null = null;
 
       const mockFrom = vi.fn().mockImplementation((table: string) => {
         if (table === 'activity_logs') {
@@ -94,7 +94,7 @@ describe('adminService Contract & Business Logic (Unit Tests)', () => {
         };
       });
 
-      // @ts-ignore
+      // @ts-expect-error test override for supabase.from
       clientModule.supabase.from = mockFrom;
 
       const targetGroupId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
@@ -127,7 +127,7 @@ describe('adminService Contract & Business Logic (Unit Tests)', () => {
     it('preserves an existing or explicit qr_code_hash when provided', async () => {
       vi.spyOn(clientModule, 'isSupabaseConfigured').mockReturnValue(true);
 
-      let capturedPayload: any = null;
+      let capturedPayload: Record<string, unknown> | null = null;
       const mockFrom = vi.fn().mockImplementation((table: string) => {
         if (table === 'activity_logs') {
           return { insert: vi.fn().mockResolvedValue({ data: null, error: null }) };
@@ -152,7 +152,7 @@ describe('adminService Contract & Business Logic (Unit Tests)', () => {
         };
       });
 
-      // @ts-ignore
+      // @ts-expect-error test override for supabase.from
       clientModule.supabase.from = mockFrom;
 
       const explicitHash = '550e8400-e29b-41d4-a716-446655440000';
@@ -185,7 +185,7 @@ describe('adminService Contract & Business Logic (Unit Tests)', () => {
         }),
       });
 
-      // @ts-ignore
+      // @ts-expect-error test override for supabase.from
       clientModule.supabase.from = mockFrom;
 
       const result = await adminService.addStudent({
@@ -214,7 +214,7 @@ describe('adminService Contract & Business Logic (Unit Tests)', () => {
         }),
       });
 
-      // @ts-ignore
+      // @ts-expect-error test override for supabase.from
       clientModule.supabase.from = mockFrom;
 
       const result = await adminService.getStudents();
@@ -235,7 +235,7 @@ describe('adminService Contract & Business Logic (Unit Tests)', () => {
         }),
       });
 
-      // @ts-ignore
+      // @ts-expect-error test override for supabase.from
       clientModule.supabase.from = mockFrom;
 
       const result = await adminService.getStudents();
@@ -326,7 +326,7 @@ describe('adminService Contract & Business Logic (Unit Tests)', () => {
         };
       });
 
-      // @ts-ignore
+      // @ts-expect-error test override for supabase.from
       clientModule.supabase.from = mockFrom;
 
       const res = await adminService.createTeacher({
@@ -342,7 +342,7 @@ describe('adminService Contract & Business Logic (Unit Tests)', () => {
     it('trims input, inserts teacher record, and converts email to lowercase', async () => {
       vi.spyOn(clientModule, 'isSupabaseConfigured').mockReturnValue(true);
 
-      let capturedPayload: any = null;
+      let capturedPayload: Record<string, unknown> | null = null;
       const mockFrom = vi.fn().mockImplementation((table: string) => {
         if (table === 'activity_logs') {
           return {
@@ -368,7 +368,7 @@ describe('adminService Contract & Business Logic (Unit Tests)', () => {
         };
       });
 
-      // @ts-ignore
+      // @ts-expect-error test override for supabase.from
       clientModule.supabase.from = mockFrom;
 
       const res = await adminService.createTeacher({
@@ -382,14 +382,14 @@ describe('adminService Contract & Business Logic (Unit Tests)', () => {
       expect(res.data?.full_name).toBe('Dr. Tariq Mahmoud');
       expect(res.data?.subject).toBe('Physics');
       expect(res.data?.email).toBe('tariq.m@edutrack.edu');
-      expect('user_id' in capturedPayload).toBe(false);
-      expect((capturedPayload as any).user_id).toBeUndefined();
+      expect('user_id' in (capturedPayload ?? {})).toBe(false);
+      expect(capturedPayload?.user_id).toBeUndefined();
     });
 
     it('handles duplicate email (error code 23505) with clear friendly message', async () => {
       vi.spyOn(clientModule, 'isSupabaseConfigured').mockReturnValue(true);
 
-      const mockFrom = vi.fn().mockImplementation((table: string) => {
+      const mockFrom = vi.fn().mockImplementation(() => {
         return {
           insert: vi.fn().mockReturnValue({
             select: vi.fn().mockReturnValue({
@@ -405,7 +405,7 @@ describe('adminService Contract & Business Logic (Unit Tests)', () => {
         };
       });
 
-      // @ts-ignore
+      // @ts-expect-error test override for supabase.from
       clientModule.supabase.from = mockFrom;
 
       const res = await adminService.createTeacher({
@@ -502,7 +502,7 @@ describe('adminService Contract & Business Logic (Unit Tests)', () => {
         return {};
       });
 
-      // @ts-ignore
+      // @ts-expect-error test override for supabase.from
       clientModule.supabase.from = mockFrom;
 
       const res = await adminService.updateGroupTeacher(groupId, teacherId);
@@ -549,7 +549,7 @@ describe('adminService Contract & Business Logic (Unit Tests)', () => {
         return {};
       });
 
-      // @ts-ignore
+      // @ts-expect-error test override for supabase.from
       clientModule.supabase.from = mockFrom;
 
       const res = await adminService.updateGroupTeacher(groupId, null);
@@ -596,7 +596,7 @@ describe('adminService Contract & Business Logic (Unit Tests)', () => {
         return {};
       });
 
-      // @ts-ignore
+      // @ts-expect-error test override for supabase.from
       clientModule.supabase.from = mockFrom;
 
       const res = await adminService.getTeachers();
@@ -632,12 +632,193 @@ describe('adminService Contract & Business Logic (Unit Tests)', () => {
         return {};
       });
 
-      // @ts-ignore
+      // @ts-expect-error test override for supabase.from
       clientModule.supabase.from = mockFrom;
 
       const res = await adminService.getTeachers();
       expect(res.data).toBeNull();
       expect(res.error).toBe('Connection timeout');
+    });
+  });
+
+  describe('updateClass validation & execution', () => {
+    it('rejects invalid UUID, empty name, empty grade_level, and non-positive or non-integer capacity', async () => {
+      vi.spyOn(clientModule, 'isSupabaseConfigured').mockReturnValue(true);
+
+      const badUuid = await adminService.updateClass({
+        id: 'not-a-uuid',
+        name: 'Grade 8A',
+        grade_level: 'Grade 8',
+        capacity: 30,
+      });
+      expect(badUuid.data).toBeNull();
+      expect(badUuid.error).toContain('valid group UUID');
+
+      const validId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+
+      const badName = await adminService.updateClass({
+        id: validId,
+        name: '   ',
+        grade_level: 'Grade 8',
+        capacity: 30,
+      });
+      expect(badName.data).toBeNull();
+      expect(badName.error).toContain('name is required');
+
+      const badGrade = await adminService.updateClass({
+        id: validId,
+        name: 'Grade 8A',
+        grade_level: ' ',
+        capacity: 30,
+      });
+      expect(badGrade.data).toBeNull();
+      expect(badGrade.error).toContain('Grade level is required');
+
+      const badCapZero = await adminService.updateClass({
+        id: validId,
+        name: 'Grade 8A',
+        grade_level: 'Grade 8',
+        capacity: 0,
+      });
+      expect(badCapZero.data).toBeNull();
+      expect(badCapZero.error).toContain('positive whole number');
+
+      const badCapFloat = await adminService.updateClass({
+        id: validId,
+        name: 'Grade 8A',
+        grade_level: 'Grade 8',
+        capacity: 25.5,
+      });
+      expect(badCapFloat.data).toBeNull();
+      expect(badCapFloat.error).toContain('positive whole number');
+    });
+
+    it('updates editable columns only (never teacher_id, enrolled_count, or id) and returns server row', async () => {
+      vi.spyOn(clientModule, 'isSupabaseConfigured').mockReturnValue(true);
+
+      const groupId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+      const updateSpy = vi.fn().mockReturnValue({
+        eq: vi.fn().mockReturnValue({
+          select: vi.fn().mockReturnValue({
+            maybeSingle: vi.fn().mockResolvedValue({
+              data: {
+                id: groupId,
+                name: 'Grade 8A Honors',
+                grade_level: 'Grade 8',
+                subject: 'Physics',
+                room: 'Lab 3',
+                capacity: 36,
+                enrolled_count: 14,
+                schedule: 'Mon - Thu: 09:00 AM - 01:00 PM',
+                teacher_id: '11111111-1111-4111-8111-111111111111',
+                teachers: { full_name: 'Dr. Salma' },
+                created_at: '2026-11-03T08:00:00Z',
+                updated_at: '2026-11-24T10:00:00Z',
+              },
+              error: null,
+            }),
+          }),
+        }),
+      });
+
+      const mockFrom = vi.fn().mockImplementation((table: string) => {
+        if (table === 'groups') {
+          return { update: updateSpy };
+        }
+        if (table === 'activity_logs') {
+          return { insert: vi.fn().mockResolvedValue({ data: null, error: null }) };
+        }
+        return {};
+      });
+
+      // @ts-expect-error test override for supabase.from
+      clientModule.supabase.from = mockFrom;
+
+      const res = await adminService.updateClass({
+        id: groupId,
+        name: '  Grade 8A Honors  ',
+        grade_level: '  Grade 8  ',
+        subject: ' Physics ',
+        room: ' Lab 3 ',
+        capacity: 36,
+        schedule: ' Mon - Thu: 09:00 AM - 01:00 PM ',
+      });
+
+      expect(res.error).toBeNull();
+      expect(res.data?.name).toBe('Grade 8A Honors');
+      expect(res.data?.teacher_name).toBe('Dr. Salma');
+      expect(res.data?.enrolled_count).toBe(14);
+      expect(res.data?.schedule).toBe('Mon - Thu: 09:00 AM - 01:00 PM');
+
+      const sentPayload = updateSpy.mock.calls[0][0];
+      expect(sentPayload).toMatchObject({
+        name: 'Grade 8A Honors',
+        grade_level: 'Grade 8',
+        subject: 'Physics',
+        room: 'Lab 3',
+        capacity: 36,
+        schedule: 'Mon - Thu: 09:00 AM - 01:00 PM',
+      });
+      expect(sentPayload).not.toHaveProperty('id');
+      expect(sentPayload).not.toHaveProperty('teacher_id');
+      expect(sentPayload).not.toHaveProperty('enrolled_count');
+    });
+  });
+
+  describe('updateStudentStatus RPC dispatch & validation', () => {
+    it('validates inputs and dispatches update_student_enrollment_status with expected status', async () => {
+      vi.spyOn(clientModule, 'isSupabaseConfigured').mockReturnValue(true);
+
+      const badId = await adminService.updateStudentStatus('not-a-uuid', 'suspended', 'active');
+      expect(badId.data).toBeNull();
+      expect(badId.error).toContain('valid student UUID');
+
+      const rpcSpy = vi.fn().mockResolvedValue({
+        data: { id: '22221111-1111-4111-8111-111111111111', status: 'suspended' },
+        error: null,
+      });
+      // @ts-expect-error test override for supabase.rpc
+      clientModule.supabase.rpc = rpcSpy;
+      // @ts-expect-error test override for supabase.from
+      clientModule.supabase.from = vi.fn().mockReturnValue({
+        insert: vi.fn().mockResolvedValue({ data: null, error: null }),
+      });
+
+      const res = await adminService.updateStudentStatus(
+        '22221111-1111-4111-8111-111111111111',
+        'suspended',
+        'active'
+      );
+
+      expect(res.error).toBeNull();
+      expect(res.data).toEqual({
+        id: '22221111-1111-4111-8111-111111111111',
+        status: 'suspended',
+      });
+      expect(rpcSpy).toHaveBeenCalledWith('update_student_enrollment_status', {
+        p_student_id: '22221111-1111-4111-8111-111111111111',
+        p_new_status: 'suspended',
+        p_expected_status: 'active',
+      });
+    });
+
+    it('propagates conflict error code without mutating data', async () => {
+      vi.spyOn(clientModule, 'isSupabaseConfigured').mockReturnValue(true);
+      // @ts-expect-error test override for supabase.rpc
+      clientModule.supabase.rpc = vi.fn().mockResolvedValue({
+        data: null,
+        error: { message: 'Conflict: Student enrollment status changed concurrently', code: '40001' },
+      });
+
+      const res = await adminService.updateStudentStatus(
+        '22221111-1111-4111-8111-111111111111',
+        'graduated',
+        'active'
+      );
+
+      expect(res.data).toBeNull();
+      expect(res.code).toBe('40001');
+      expect(res.error).toContain('Conflict');
     });
   });
 });

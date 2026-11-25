@@ -375,9 +375,10 @@ describe('Real PostgreSQL Database Execution Tests (Isolated Engine)', () => {
     let missingClaimUpdateFailed = false;
     try {
       await db.exec(`UPDATE public.profiles SET role = 'admin' WHERE id = '${studentId}';`);
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
       missingClaimUpdateFailed = true;
-      expect(err.message).toContain('Unauthorized: Only administrators can modify user roles');
+      expect(message).toContain('Unauthorized: Only administrators can modify user roles');
     }
     expect(missingClaimUpdateFailed).toBe(true);
 
@@ -396,9 +397,10 @@ describe('Real PostgreSQL Database Execution Tests (Isolated Engine)', () => {
     let emptyClaimUpdateFailed = false;
     try {
       await db.exec(`UPDATE public.profiles SET role = 'admin' WHERE id = '${studentId}';`);
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
       emptyClaimUpdateFailed = true;
-      expect(err.message).toContain('Unauthorized: Only administrators can modify user roles');
+      expect(message).toContain('Unauthorized: Only administrators can modify user roles');
     }
     expect(emptyClaimUpdateFailed).toBe(true);
 
@@ -417,9 +419,10 @@ describe('Real PostgreSQL Database Execution Tests (Isolated Engine)', () => {
     let jsonClaimsStudentFailed = false;
     try {
       await db.exec(`UPDATE public.profiles SET role = 'admin' WHERE id = '${studentId}';`);
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
       jsonClaimsStudentFailed = true;
-      expect(err.message).toContain('Unauthorized: Only administrators can modify user roles');
+      expect(message).toContain('Unauthorized: Only administrators can modify user roles');
     }
     expect(jsonClaimsStudentFailed).toBe(true);
 
@@ -446,9 +449,10 @@ describe('Real PostgreSQL Database Execution Tests (Isolated Engine)', () => {
         VALUES ('${studentId}', 'student_target@edutrack.com', 'Fake Admin', 'admin')
         ON CONFLICT (id) DO UPDATE SET role = 'admin';
       `);
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
       upsertFailed = true;
-      expect(err.message).toMatch(/Unauthorized: Only administrators can (assign the admin role|modify user roles)/);
+      expect(message).toMatch(/Unauthorized: Only administrators can (assign the admin role|modify user roles)/);
     }
     expect(upsertFailed).toBe(true);
 
@@ -467,9 +471,10 @@ describe('Real PostgreSQL Database Execution Tests (Isolated Engine)', () => {
     let anonExecuteFailed = false;
     try {
       await db.query(`SELECT * FROM public.provision_admin('${studentId}');`);
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
       anonExecuteFailed = true;
-      expect(err.message).toMatch(/(permission denied|Unauthorized)/i);
+      expect(message).toMatch(/(permission denied|Unauthorized)/i);
     }
     expect(anonExecuteFailed).toBe(true);
 
@@ -483,9 +488,10 @@ describe('Real PostgreSQL Database Execution Tests (Isolated Engine)', () => {
     let studentExecuteFailed = false;
     try {
       await db.query(`SELECT * FROM public.provision_admin('${studentId}');`);
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
       studentExecuteFailed = true;
-      expect(err.message).toMatch(/(permission denied|Unauthorized)/i);
+      expect(message).toMatch(/(permission denied|Unauthorized)/i);
     }
     expect(studentExecuteFailed).toBe(true);
 
@@ -500,9 +506,10 @@ describe('Real PostgreSQL Database Execution Tests (Isolated Engine)', () => {
     let adminUserExecuteFailed = false;
     try {
       await db.query(`SELECT * FROM public.provision_admin('${studentId}');`);
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
       adminUserExecuteFailed = true;
-      expect(err.message).toMatch(/(permission denied|Unauthorized)/i);
+      expect(message).toMatch(/(permission denied|Unauthorized)/i);
     }
     expect(adminUserExecuteFailed).toBe(true);
 
@@ -674,9 +681,10 @@ describe('Real PostgreSQL Database Execution Tests (Isolated Engine)', () => {
     let studentUpgradeSelfPromoteFailed = false;
     try {
       await db.exec(`UPDATE public.profiles SET role = 'admin' WHERE id = '${legacyStudentId}';`);
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
       studentUpgradeSelfPromoteFailed = true;
-      expect(err.message).toContain('Unauthorized: Only administrators can modify user roles');
+      expect(message).toContain('Unauthorized: Only administrators can modify user roles');
     }
     expect(studentUpgradeSelfPromoteFailed).toBe(true);
 
@@ -787,9 +795,10 @@ describe('Real PostgreSQL Database Execution Tests (Isolated Engine)', () => {
         INSERT INTO public.attendance (student_id, group_id, date, status, scan_method)
         VALUES ('${studentIdA}', '${groupIdB}', '2026-11-20', 'Present', 'manual');
       `);
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
       invalidGroupFailed = true;
-      expect(err.message).toContain('Student does not belong to the specified group');
+      expect(message).toContain('Student does not belong to the specified group');
     }
     expect(invalidGroupFailed).toBe(true);
 
@@ -802,14 +811,15 @@ describe('Real PostgreSQL Database Execution Tests (Isolated Engine)', () => {
     `);
 
     // Anon read is blocked either by lack of table grant or RLS returning 0 rows
-    let anonReadBlocked = false;
+    let anonReadBlocked: boolean;
     try {
       const anonAttendanceRead = await db.query(`SELECT * FROM public.attendance;`);
       expect(anonAttendanceRead.rows.length).toBe(0);
       anonReadBlocked = true;
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
       anonReadBlocked = true;
-      expect(err.message).toMatch(/(permission denied|violates row-level security)/i);
+      expect(message).toMatch(/(permission denied|violates row-level security)/i);
     }
     expect(anonReadBlocked).toBe(true);
 
@@ -909,8 +919,13 @@ describe('Real PostgreSQL Database Execution Tests (Isolated Engine)', () => {
       db.query(`SELECT public.record_qr_attendance('QR-CONCURRENT-005', '${groupIdA}') as res;`)
     ]);
 
-    const cJson1 = concurrentRes1.rows[0].res as any;
-    const cJson2 = concurrentRes2.rows[0].res as any;
+    type QrRpcPayload = {
+      code?: string;
+      success?: boolean;
+      attendance?: { check_in_time?: string };
+    };
+    const cJson1 = concurrentRes1.rows[0].res as QrRpcPayload;
+    const cJson2 = concurrentRes2.rows[0].res as QrRpcPayload;
 
     // One must be RECORDED, the other must be ALREADY_RECORDED (no unhandled unique_violation!)
     const codes = [cJson1.code, cJson2.code].sort();
@@ -919,8 +934,8 @@ describe('Real PostgreSQL Database Execution Tests (Isolated Engine)', () => {
     expect(cJson2.success).toBe(true);
 
     // Verify arrival times agree and exactly 1 attendance row was written
-    const arrivalTime1 = cJson1.attendance.check_in_time;
-    const arrivalTime2 = cJson2.attendance.check_in_time;
+    const arrivalTime1 = cJson1.attendance?.check_in_time;
+    const arrivalTime2 = cJson2.attendance?.check_in_time;
     expect(arrivalTime1).toBe(arrivalTime2);
 
     const concurrentCount = await db.query(`
@@ -933,19 +948,19 @@ describe('Real PostgreSQL Database Execution Tests (Isolated Engine)', () => {
     const nullGroupRes = await db.query(`
       SELECT public.record_qr_attendance('QR-SARA-001', NULL) as res;
     `);
-    expect((nullGroupRes.rows[0].res as any).code).toBe('GROUP_REQUIRED');
+    expect((nullGroupRes.rows[0].res as QrRpcPayload).code).toBe('GROUP_REQUIRED');
 
     // Rejects unassigned student
     const unassignedRes = await db.query(`
       SELECT public.record_qr_attendance('QR-UNASSIGNED-004', '${groupIdA}') as res;
     `);
-    expect((unassignedRes.rows[0].res as any).code).toBe('STUDENT_UNASSIGNED');
+    expect((unassignedRes.rows[0].res as QrRpcPayload).code).toBe('STUDENT_UNASSIGNED');
 
     // Rejects group mismatch
     const mismatchRes = await db.query(`
       SELECT public.record_qr_attendance('QR-KAREEM-002', '${groupIdA}') as res;
     `);
-    expect((mismatchRes.rows[0].res as any).code).toBe('GROUP_MISMATCH');
+    expect((mismatchRes.rows[0].res as QrRpcPayload).code).toBe('GROUP_MISMATCH');
 
     // Rejects historical attendance under another group
     // Mark Sara for group B on another date, then attempt group A
@@ -957,7 +972,7 @@ describe('Real PostgreSQL Database Execution Tests (Isolated Engine)', () => {
       SELECT public.record_qr_attendance('QR-SARA-001', '${groupIdB}') as res;
     `);
     // First hits student's assigned group mismatch or historical group mismatch
-    expect((histMismatchRes.rows[0].res as any).code).toMatch(/(GROUP_MISMATCH|HISTORICAL_GROUP_MISMATCH)/);
+    expect((histMismatchRes.rows[0].res as QrRpcPayload).code).toMatch(/(GROUP_MISMATCH|HISTORICAL_GROUP_MISMATCH)/);
 
     // 8C: Attendance Time Correctness & Preservation
     // 1. Present <-> Late corrections retain original arrival time
@@ -1045,9 +1060,10 @@ describe('Real PostgreSQL Database Execution Tests (Isolated Engine)', () => {
     let anonCallBlocked = false;
     try {
       await db.query(`SELECT public.record_qr_attendance('QR-SARA-001', '${groupIdA}');`);
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
       anonCallBlocked = true;
-      expect(err.message).toMatch(/(permission denied|privilege)/i);
+      expect(message).toMatch(/(permission denied|privilege)/i);
     }
     expect(anonCallBlocked).toBe(true);
 
@@ -1060,9 +1076,10 @@ describe('Real PostgreSQL Database Execution Tests (Isolated Engine)', () => {
     let nonAdminCallBlocked = false;
     try {
       await db.query(`SELECT public.record_qr_attendance('QR-SARA-001', '${groupIdA}');`);
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
       nonAdminCallBlocked = true;
-      expect(err.message).toContain('Unauthorized');
+      expect(message).toContain('Unauthorized');
     }
     expect(nonAdminCallBlocked).toBe(true);
 
@@ -1955,14 +1972,17 @@ describe('Real PostgreSQL Database Execution Tests (Isolated Engine)', () => {
       expect(Number(groupCountRes.rows[0].enrolled_count)).toBe(1);
 
       // --- 3. Atomic Teacher & Student Link/Unlink & Previous User Accuracy ---
-      const parseRpc = (row: any) => (typeof row.res === 'string' ? JSON.parse(row.res) : row.res);
+      const parseRpc = (row: Record<string, unknown>) =>
+        typeof row.res === 'string' ? JSON.parse(row.res) : row.res;
 
       // A. Competing teacher link calls for the same unlinked teacher (Promise.all in PGlite)
       const teacherRaceResults = await Promise.allSettled([
         db.query(`SELECT public.link_teacher_account('${teacherId}', '${teacherUserA}') AS res;`),
         db.query(`SELECT public.link_teacher_account('${teacherId}', '${teacherUserB}') AS res;`),
       ]);
-      const fulfilledTeacher = teacherRaceResults.filter((r): r is PromiseFulfilledResult<any> => r.status === 'fulfilled');
+      const fulfilledTeacher = teacherRaceResults.filter(
+        (r): r is PromiseFulfilledResult<{ rows: Array<Record<string, unknown>> }> => r.status === 'fulfilled'
+      );
       const rejectedTeacher = teacherRaceResults.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
       expect(fulfilledTeacher.length).toBe(1);
       expect(rejectedTeacher.length).toBe(1);
@@ -1996,7 +2016,9 @@ describe('Real PostgreSQL Database Execution Tests (Isolated Engine)', () => {
         db.query(`SELECT public.link_student_account('${createdStudentId}', '${studentUserA}') AS res;`),
         db.query(`SELECT public.link_student_account('${createdStudentId}', '${studentUserB}') AS res;`),
       ]);
-      const fulfilledStudent = studentRaceResults.filter((r): r is PromiseFulfilledResult<any> => r.status === 'fulfilled');
+      const fulfilledStudent = studentRaceResults.filter(
+        (r): r is PromiseFulfilledResult<{ rows: Array<Record<string, unknown>> }> => r.status === 'fulfilled'
+      );
       const rejectedStudent = studentRaceResults.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
       expect(fulfilledStudent.length).toBe(1);
       expect(rejectedStudent.length).toBe(1);
@@ -2290,14 +2312,14 @@ describe('Real PostgreSQL Database Execution Tests (Isolated Engine)', () => {
           ('Zainab Sami', 'ET-C1-04', '${groupUnassigned}', 'Grade 12', 'SECRET-QR-U1', 'Mrs Sami', '+201009990011', 'active');
       `);
 
-      const parseJson = (v: any) => (typeof v === 'string' ? JSON.parse(v) : v);
+      const parseJson = (v: unknown) => (typeof v === 'string' ? JSON.parse(v) : v);
 
       // 1. Teacher 1 only sees Group A and Group Empty (never Group B or Unassigned)
       await setAuth(teacherUser1);
       const ctx1 = parseJson((await db.query(`SELECT public.get_teacher_portal_context() AS res;`)).rows[0].res);
       expect(ctx1.linked).toBe(true);
       expect(ctx1.teacher.id).toBe(teacherRec1);
-      expect(ctx1.groups.map((g: any) => g.id).sort()).toEqual([groupA, groupEmpty].sort());
+      expect(ctx1.groups.map((g: { id: string }) => g.id).sort()).toEqual([groupA, groupEmpty].sort());
 
       // Direct SELECT on students/groups/teachers returns 0 rows (table RLS stays admin-only, protecting PII/QR)
       expect((await db.query(`SELECT * FROM public.students;`)).rows).toHaveLength(0);
@@ -2329,9 +2351,9 @@ describe('Real PostgreSQL Database Execution Tests (Isolated Engine)', () => {
       await setAuth(teacherUser2);
       const ctx2 = parseJson((await db.query(`SELECT public.get_teacher_portal_context() AS res;`)).rows[0].res);
       expect(ctx2.linked).toBe(true);
-      expect(ctx2.groups.map((g: any) => g.id)).toEqual([groupB]);
+      expect(ctx2.groups.map((g: { id: string }) => g.id)).toEqual([groupB]);
       const rosterB = parseJson((await db.query(`SELECT public.get_teacher_group_students('${groupB}') AS res;`)).rows[0].res);
-      expect(rosterB.students.map((s: any) => s.student_code)).toEqual(['ET-C1-03']);
+      expect(rosterB.students.map((s: { student_code: string }) => s.student_code)).toEqual(['ET-C1-03']);
       await expect(db.query(`SELECT public.get_teacher_group_students('${groupA}');`)).rejects.toThrow(/access denied/i);
 
       // 3. Unlinked teacher sees linked: false and cannot read any group roster
@@ -2360,13 +2382,13 @@ describe('Real PostgreSQL Database Execution Tests (Isolated Engine)', () => {
       // Teacher 1 immediately loses access to Group A on every read
       await setAuth(teacherUser1);
       const ctx1After = parseJson((await db.query(`SELECT public.get_teacher_portal_context() AS res;`)).rows[0].res);
-      expect(ctx1After.groups.map((g: any) => g.id)).toEqual([groupEmpty]);
+      expect(ctx1After.groups.map((g: { id: string }) => g.id)).toEqual([groupEmpty]);
       await expect(db.query(`SELECT public.get_teacher_group_students('${groupA}');`)).rejects.toThrow(/access denied/i);
 
       // Teacher 2 gains scoped access to Group A
       await setAuth(teacherUser2);
       const ctx2After = parseJson((await db.query(`SELECT public.get_teacher_portal_context() AS res;`)).rows[0].res);
-      expect(ctx2After.groups.map((g: any) => g.id).sort()).toEqual([groupA, groupB].sort());
+      expect(ctx2After.groups.map((g: { id: string }) => g.id).sort()).toEqual([groupA, groupB].sort());
       const rosterAAfter = parseJson((await db.query(`SELECT public.get_teacher_group_students('${groupA}') AS res;`)).rows[0].res);
       expect(rosterAAfter.students).toHaveLength(2);
     } finally {
@@ -2435,7 +2457,7 @@ describe('Real PostgreSQL Database Execution Tests (Isolated Engine)', () => {
         return { grades: g.rows[0].cnt, notes: n.rows[0].cnt };
       };
 
-      const parseJson = (v: any) => (typeof v === 'string' ? JSON.parse(v) : v);
+      const parseJson = (v: unknown) => (typeof v === 'string' ? JSON.parse(v) : v);
 
       await db.exec(`
         INSERT INTO auth.users (id, email) VALUES
@@ -2667,7 +2689,7 @@ describe('Real PostgreSQL Database Execution Tests (Isolated Engine)', () => {
         }
         return db.exec(`SET ROLE authenticated; SET request.jwt.claim.role = 'authenticated'; SET request.jwt.claim.sub = '${uid}';`);
       };
-      const parseJson = (v: any) => (typeof v === 'string' ? JSON.parse(v) : v);
+      const parseJson = (v: unknown) => (typeof v === 'string' ? JSON.parse(v) : v);
 
       await db.exec(`
         INSERT INTO auth.users (id, email) VALUES
@@ -2871,7 +2893,7 @@ describe('Real PostgreSQL Database Execution Tests (Isolated Engine)', () => {
         }
         return db.exec(`SET ROLE authenticated; SET request.jwt.claim.role = 'authenticated'; SET request.jwt.claim.sub = '${uid}';`);
       };
-      const parseJson = (v: any) => (typeof v === 'string' ? JSON.parse(v) : v);
+      const parseJson = (v: unknown) => (typeof v === 'string' ? JSON.parse(v) : v);
 
       await db.exec(`
         INSERT INTO auth.users (id, email) VALUES
@@ -2936,7 +2958,7 @@ describe('Real PostgreSQL Database Execution Tests (Isolated Engine)', () => {
       await setAuth(parentUser1);
       const p1Children = parseJson((await db.query(`SELECT public.get_parent_portal_children() AS res;`)).rows[0].res);
       expect(p1Children.children).toHaveLength(2);
-      expect(p1Children.children.map((c: any) => c.student_code)).toEqual(['ET-E-101', 'ET-E-102']);
+      expect(p1Children.children.map((c: { student_code: string }) => c.student_code)).toEqual(['ET-E-101', 'ET-E-102']);
       for (const child of p1Children.children) {
         expect(Object.keys(child).sort()).toEqual(['full_name', 'grade_level', 'group', 'id', 'status', 'student_code']);
       }
@@ -2974,7 +2996,7 @@ describe('Real PostgreSQL Database Execution Tests (Isolated Engine)', () => {
       // 2. Parent 2 sees ONLY shared child ET-E-101 and CANNOT query unlinked child ET-E-102 even by exact UUID
       await setAuth(parentUser2);
       const p2Children = parseJson((await db.query(`SELECT public.get_parent_portal_children() AS res;`)).rows[0].res);
-      expect(p2Children.children.map((c: any) => c.student_code)).toEqual(['ET-E-101']);
+      expect(p2Children.children.map((c: { student_code: string }) => c.student_code)).toEqual(['ET-E-101']);
 
       const p2DetailsS1 = parseJson((await db.query(`SELECT public.get_parent_child_details('${student1Id}') AS res;`)).rows[0].res);
       expect(Number(p2DetailsS1.grades[0].score)).toBe(18);
@@ -3002,7 +3024,7 @@ describe('Real PostgreSQL Database Execution Tests (Isolated Engine)', () => {
       await setAuth(parentUser1);
       await expect(db.query(`SELECT public.get_parent_child_details('${student1Id}');`)).rejects.toThrow(/not linked/i);
       const p1AfterUnlink = parseJson((await db.query(`SELECT public.get_parent_portal_children() AS res;`)).rows[0].res);
-      expect(p1AfterUnlink.children.map((c: any) => c.student_code)).toEqual(['ET-E-102']);
+      expect(p1AfterUnlink.children.map((c: { student_code: string }) => c.student_code)).toEqual(['ET-E-102']);
 
       await setAuth(parentUser2);
       const p2AfterP1Unlink = parseJson((await db.query(`SELECT public.get_parent_child_details('${student1Id}') AS res;`)).rows[0].res);

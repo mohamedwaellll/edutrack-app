@@ -9,7 +9,7 @@ import { accountLinkingService } from '../services/accountLinkingService';
 import { Teacher, Student, UserProfile } from '../types/database';
 import { ParentStudentLink } from '../services/accountLinkingService';
 
-vi.mock('../contexts/AuthContext', () => ({
+vi.mock('../contexts/authState', () => ({
   useAuth: () => ({
     user: { id: 'admin-0000-0000-0000-000000000001', email: 'admin@edutrack.com' },
     profile: {
@@ -28,10 +28,12 @@ vi.mock('../components/AttendanceQRScanner', () => ({
 }));
 
 vi.mock('recharts', async () => {
-  const actual: any = await vi.importActual('recharts');
+  const actual = await vi.importActual<typeof import('recharts')>('recharts');
   return {
     ...actual,
-    ResponsiveContainer: ({ children }: any) => <div style={{ width: 400, height: 200 }}>{children}</div>,
+    ResponsiveContainer: ({ children }: { children?: React.ReactNode }) => (
+      <div style={{ width: 400, height: 200 }}>{children}</div>
+    ),
   };
 });
 
@@ -449,12 +451,13 @@ describe('AdminDashboard Account Linking Workflows (Stage B.2 Component Tests)',
   });
 
   it('5. Double-click guard prevents duplicate RPC submissions while request is in flight', async () => {
-    let resolveRpc!: (val: any) => void;
-    const pendingPromise = new Promise((resolve) => {
+    type LinkResult = Awaited<ReturnType<typeof accountLinkingService.linkTeacherAccount>>;
+    let resolveRpc!: (val: LinkResult) => void;
+    const pendingPromise = new Promise<LinkResult>((resolve) => {
       resolveRpc = resolve;
     });
 
-    const linkSpy = vi.spyOn(accountLinkingService, 'linkTeacherAccount').mockReturnValue(pendingPromise as any);
+    const linkSpy = vi.spyOn(accountLinkingService, 'linkTeacherAccount').mockReturnValue(pendingPromise);
 
     await openAccountLinkingFromSidebar();
 
@@ -647,7 +650,7 @@ describe('AdminDashboard Account Linking Workflows (Stage B.2 Component Tests)',
 
     // Select Parent 1 and Child Student 2
     fireEvent.change(parentSelect, { target: { value: parent1Id } });
-    const childFilter = screen.getByLabelText(/Filter Students by Name or Code/i) as HTMLInputElement;
+    screen.getByLabelText(/Filter Students by Name or Code/i);
     const childSelect = screen.getByLabelText(/Select Student \(Explicit Code & UUID\)/i) as HTMLSelectElement;
     fireEvent.change(childSelect, { target: { value: student2Id } });
     expect(childSelect.value).toBe(student2Id);

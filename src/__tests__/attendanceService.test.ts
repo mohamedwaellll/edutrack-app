@@ -54,7 +54,7 @@ describe('Manual Attendance Service Unit Tests (Milestone 2)', () => {
         { id: 'att-1', student_id: 'student-1', group_id: 'group-1', date: '2026-11-19', status: 'Present', check_in_time: '08:15:00' }
       ];
 
-      (supabase.from as any).mockImplementation((table: string) => {
+      vi.mocked(supabase.from).mockImplementation(((table: string) => {
         if (table === 'students') {
           return {
             select: vi.fn().mockReturnThis(),
@@ -70,7 +70,7 @@ describe('Manual Attendance Service Unit Tests (Milestone 2)', () => {
           };
         }
         return {};
-      });
+      }) as unknown as typeof supabase.from);
 
       const res = await attendanceService.getGroupRosterAttendance('group-1', '2026-11-19');
       expect(res.error).toBeNull();
@@ -89,7 +89,7 @@ describe('Manual Attendance Service Unit Tests (Milestone 2)', () => {
     });
 
     it('surfaces failed database queries explicitly instead of returning false empty', async () => {
-      (supabase.from as any).mockImplementation((table: string) => {
+      vi.mocked(supabase.from).mockImplementation(((table: string) => {
         if (table === 'students') {
           return {
             select: vi.fn().mockReturnThis(),
@@ -98,7 +98,7 @@ describe('Manual Attendance Service Unit Tests (Milestone 2)', () => {
           };
         }
         return {};
-      });
+      }) as unknown as typeof supabase.from);
 
       const res = await attendanceService.getGroupRosterAttendance('group-1', '2026-11-19');
       expect(res.data).toBeNull();
@@ -108,7 +108,7 @@ describe('Manual Attendance Service Unit Tests (Milestone 2)', () => {
 
   describe('saveStudentAttendance', () => {
     it('validates that student belongs to the selected group', async () => {
-      (supabase.from as any).mockImplementation((table: string) => {
+      vi.mocked(supabase.from).mockImplementation(((table: string) => {
         if (table === 'students') {
           return {
             select: vi.fn().mockReturnThis(),
@@ -120,7 +120,7 @@ describe('Manual Attendance Service Unit Tests (Milestone 2)', () => {
           };
         }
         return {};
-      });
+      }) as unknown as typeof supabase.from);
 
       const res = await attendanceService.saveStudentAttendance({
         student_id: 'student-1',
@@ -134,7 +134,7 @@ describe('Manual Attendance Service Unit Tests (Milestone 2)', () => {
     });
 
     it('rejects conflict if student already has attendance under a different group', async () => {
-      (supabase.from as any).mockImplementation((table: string) => {
+      vi.mocked(supabase.from).mockImplementation(((table: string) => {
         if (table === 'students') {
           return {
             select: vi.fn().mockReturnThis(),
@@ -156,7 +156,7 @@ describe('Manual Attendance Service Unit Tests (Milestone 2)', () => {
           };
         }
         return {};
-      });
+      }) as unknown as typeof supabase.from);
 
       const res = await attendanceService.saveStudentAttendance({
         student_id: 'student-1',
@@ -170,9 +170,9 @@ describe('Manual Attendance Service Unit Tests (Milestone 2)', () => {
     });
 
     it('persists Absent / Excused with NULL check_in_time (no fabricated time)', async () => {
-      let insertedPayload: any = null;
+      let insertedPayload: Record<string, unknown> | null = null;
 
-      (supabase.from as any).mockImplementation((table: string) => {
+      vi.mocked(supabase.from).mockImplementation(((table: string) => {
         if (table === 'students') {
           return {
             select: vi.fn().mockReturnThis(),
@@ -188,7 +188,7 @@ describe('Manual Attendance Service Unit Tests (Milestone 2)', () => {
             select: vi.fn().mockReturnThis(),
             eq: vi.fn().mockReturnThis(),
             maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
-            upsert: vi.fn().mockImplementation((payload: any) => {
+            upsert: vi.fn().mockImplementation((payload: Record<string, unknown>) => {
               insertedPayload = payload;
               return {
                 select: vi.fn().mockReturnThis(),
@@ -216,7 +216,7 @@ describe('Manual Attendance Service Unit Tests (Milestone 2)', () => {
           };
         }
         return {};
-      });
+      }) as unknown as typeof supabase.from);
 
       const res = await attendanceService.saveStudentAttendance({
         student_id: 'student-1',
@@ -226,16 +226,16 @@ describe('Manual Attendance Service Unit Tests (Milestone 2)', () => {
       });
 
       expect(res.error).toBeNull();
-      expect(insertedPayload.check_in_time).toBeNull();
-      expect(insertedPayload.scan_method).toBe('manual');
+      expect(insertedPayload?.check_in_time).toBeNull();
+      expect(insertedPayload?.scan_method).toBe('manual');
       expect(res.data?.status).toBe('Absent');
       expect(res.data?.check_in_time).toBe('-');
     });
 
     it('updates status without duplicate rows and sets Cairo check_in_time for Present', async () => {
-      let upsertOptions: any = null;
+      let upsertOptions: Record<string, unknown> | null = null;
 
-      (supabase.from as any).mockImplementation((table: string) => {
+      vi.mocked(supabase.from).mockImplementation(((table: string) => {
         if (table === 'students') {
           return {
             select: vi.fn().mockReturnThis(),
@@ -254,7 +254,7 @@ describe('Manual Attendance Service Unit Tests (Milestone 2)', () => {
               data: { id: 'att-1', group_id: 'group-1', status: 'Absent' },
               error: null,
             }),
-            upsert: vi.fn().mockImplementation((payload: any, options: any) => {
+            upsert: vi.fn().mockImplementation((_payload: Record<string, unknown>, options: Record<string, unknown>) => {
               upsertOptions = options;
               return {
                 select: vi.fn().mockReturnThis(),
@@ -282,7 +282,7 @@ describe('Manual Attendance Service Unit Tests (Milestone 2)', () => {
           };
         }
         return {};
-      });
+      }) as unknown as typeof supabase.from);
 
       const res = await attendanceService.saveStudentAttendance({
         student_id: 'student-1',
@@ -300,7 +300,7 @@ describe('Manual Attendance Service Unit Tests (Milestone 2)', () => {
     });
 
     it('returns error on failed database write without reporting false success', async () => {
-      (supabase.from as any).mockImplementation((table: string) => {
+      vi.mocked(supabase.from).mockImplementation(((table: string) => {
         if (table === 'students') {
           return {
             select: vi.fn().mockReturnThis(),
@@ -326,7 +326,7 @@ describe('Manual Attendance Service Unit Tests (Milestone 2)', () => {
           };
         }
         return {};
-      });
+      }) as unknown as typeof supabase.from);
 
       const res = await attendanceService.saveStudentAttendance({
         student_id: 'student-1',
@@ -353,7 +353,8 @@ describe('Manual Attendance Service Unit Tests (Milestone 2)', () => {
     });
 
     it('successfully calls record_qr_attendance RPC and returns RECORDED result', async () => {
-      (supabase.rpc as any).mockResolvedValue({
+      type RpcRes = Awaited<ReturnType<typeof supabase.rpc>>;
+      vi.mocked(supabase.rpc).mockResolvedValue({
         data: {
           success: true,
           code: 'RECORDED',
@@ -371,7 +372,7 @@ describe('Manual Attendance Service Unit Tests (Milestone 2)', () => {
           },
         },
         error: null,
-      });
+      } as unknown as RpcRes);
 
       const res = await attendanceService.recordQRAttendance('QR-OMAR-001', 'group-1');
       expect(supabase.rpc).toHaveBeenCalledWith('record_qr_attendance', {
@@ -385,7 +386,8 @@ describe('Manual Attendance Service Unit Tests (Milestone 2)', () => {
     });
 
     it('returns ALREADY_RECORDED response when student is scanned twice', async () => {
-      (supabase.rpc as any).mockResolvedValue({
+      type RpcRes = Awaited<ReturnType<typeof supabase.rpc>>;
+      vi.mocked(supabase.rpc).mockResolvedValue({
         data: {
           success: true,
           code: 'ALREADY_RECORDED',
@@ -403,7 +405,7 @@ describe('Manual Attendance Service Unit Tests (Milestone 2)', () => {
           },
         },
         error: null,
-      });
+      } as unknown as RpcRes);
 
       const res = await attendanceService.recordQRAttendance('QR-OMAR-001', 'group-1');
       expect(res.error).toBeNull();
@@ -413,14 +415,15 @@ describe('Manual Attendance Service Unit Tests (Milestone 2)', () => {
     });
 
     it('handles GROUP_MISMATCH when student belongs to another class', async () => {
-      (supabase.rpc as any).mockResolvedValue({
+      type RpcRes = Awaited<ReturnType<typeof supabase.rpc>>;
+      vi.mocked(supabase.rpc).mockResolvedValue({
         data: {
           success: false,
           code: 'GROUP_MISMATCH',
           message: 'Student "Omar Sherif" belongs to a different class group',
         },
         error: null,
-      });
+      } as unknown as RpcRes);
 
       const res = await attendanceService.recordQRAttendance('QR-OMAR-001', 'different-group');
       expect(res.error).toBeNull();
@@ -429,10 +432,11 @@ describe('Manual Attendance Service Unit Tests (Milestone 2)', () => {
     });
 
     it('handles RPC database errors gracefully', async () => {
-      (supabase.rpc as any).mockResolvedValue({
+      type RpcRes = Awaited<ReturnType<typeof supabase.rpc>>;
+      vi.mocked(supabase.rpc).mockResolvedValue({
         data: null,
         error: { message: 'Unauthorized: Only administrators can record QR attendance', code: '42501' },
-      });
+      } as unknown as RpcRes);
 
       const res = await attendanceService.recordQRAttendance('QR-OMAR-001', 'group-1');
       expect(res.data).toBeNull();
@@ -440,7 +444,7 @@ describe('Manual Attendance Service Unit Tests (Milestone 2)', () => {
     });
 
     it('rejects call when groupId is null, empty or missing', async () => {
-      const resNull = await attendanceService.recordQRAttendance('QR-OMAR-001', null as any);
+      const resNull = await attendanceService.recordQRAttendance('QR-OMAR-001', null as unknown as string);
       expect(resNull.data?.success).toBe(false);
       expect(resNull.data?.code).toBe('GROUP_REQUIRED');
 
@@ -451,14 +455,15 @@ describe('Manual Attendance Service Unit Tests (Milestone 2)', () => {
     });
 
     it('handles HISTORICAL_GROUP_MISMATCH from RPC', async () => {
-      (supabase.rpc as any).mockResolvedValue({
+      type RpcRes = Awaited<ReturnType<typeof supabase.rpc>>;
+      vi.mocked(supabase.rpc).mockResolvedValue({
         data: {
           success: false,
           code: 'HISTORICAL_GROUP_MISMATCH',
           message: 'Conflict: Student Omar Sherif already has attendance recorded today under a different group',
         },
         error: null,
-      });
+      } as unknown as RpcRes);
 
       const res = await attendanceService.recordQRAttendance('QR-OMAR-001', 'group-1');
       expect(res.data?.success).toBe(false);
@@ -466,8 +471,8 @@ describe('Manual Attendance Service Unit Tests (Milestone 2)', () => {
     });
 
     it('strictly retains original arrival time on Present <-> Late status correction in saveStudentAttendance', async () => {
-      let upsertPayload: any = null;
-      (supabase.from as any).mockImplementation((table: string) => {
+      let upsertPayload: Record<string, unknown> | null = null;
+      vi.mocked(supabase.from).mockImplementation(((table: string) => {
         if (table === 'students') {
           return {
             select: vi.fn().mockReturnThis(),
@@ -520,7 +525,7 @@ describe('Manual Attendance Service Unit Tests (Milestone 2)', () => {
           };
         }
         return {};
-      });
+      }) as unknown as typeof supabase.from);
 
       // Update from Present to Late without supplying check_in_time
       const res = await attendanceService.saveStudentAttendance({
@@ -532,13 +537,13 @@ describe('Manual Attendance Service Unit Tests (Milestone 2)', () => {
 
       expect(res.error).toBeNull();
       // Payload MUST preserve original 08:14:00 and not overwrite with current time!
-      expect(upsertPayload.check_in_time).toBe('08:14:00');
-      expect(upsertPayload.status).toBe('Late');
+      expect(upsertPayload?.check_in_time).toBe('08:14:00');
+      expect(upsertPayload?.status).toBe('Late');
     });
 
     it('does NOT fabricate current arrival time for backdated manual attendance (date < today)', async () => {
-      let upsertPayload: any = null;
-      (supabase.from as any).mockImplementation((table: string) => {
+      let upsertPayload: Record<string, unknown> | null = null;
+      vi.mocked(supabase.from).mockImplementation(((table: string) => {
         if (table === 'students') {
           return {
             select: vi.fn().mockReturnThis(),
@@ -580,7 +585,7 @@ describe('Manual Attendance Service Unit Tests (Milestone 2)', () => {
           };
         }
         return {};
-      });
+      }) as unknown as typeof supabase.from);
 
       const res = await attendanceService.saveStudentAttendance({
         student_id: 'student-1',
@@ -591,12 +596,12 @@ describe('Manual Attendance Service Unit Tests (Milestone 2)', () => {
 
       expect(res.error).toBeNull();
       // Backdated manual entry must have check_in_time === null
-      expect(upsertPayload.check_in_time).toBeNull();
+      expect(upsertPayload?.check_in_time).toBeNull();
     });
 
     it('does NOT fabricate current arrival time for future manual attendance (date > today)', async () => {
-      let upsertPayload: any = null;
-      (supabase.from as any).mockImplementation((table: string) => {
+      let upsertPayload: Record<string, unknown> | null = null;
+      vi.mocked(supabase.from).mockImplementation(((table: string) => {
         if (table === 'students') {
           return {
             select: vi.fn().mockReturnThis(),
@@ -638,7 +643,7 @@ describe('Manual Attendance Service Unit Tests (Milestone 2)', () => {
           };
         }
         return {};
-      });
+      }) as unknown as typeof supabase.from);
 
       const res = await attendanceService.saveStudentAttendance({
         student_id: 'student-1',
@@ -648,7 +653,7 @@ describe('Manual Attendance Service Unit Tests (Milestone 2)', () => {
       });
 
       expect(res.error).toBeNull();
-      expect(upsertPayload.check_in_time).toBeNull();
+      expect(upsertPayload?.check_in_time).toBeNull();
     });
   });
 });
